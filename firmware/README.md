@@ -133,6 +133,18 @@ any string that would leave its box:
 [layout] OVERFLOW right: x=110 w=657 end=767 limit=685 "Scan the code and follow the page."
 ```
 
+Two checks run. `drawChecked()` tests each string against its column bounds;
+`uiDrawText()` additionally records every string drawn in a frame and reports
+when a new one intersects an earlier one:
+
+```
+[layout] OVERLAP "Network: QuoteDisplay-8" (40,391-854,442) with "in Chrome or Edge."
+```
+
+The second check exists because the first is not sufficient: two strings can
+each sit inside the screen and still land on top of each other. That shipped
+once — bounds checking reported clean while the setup screen visibly overlapped.
+
 Watch the serial monitor after a redraw; a clean boot prints no `[layout]`
 lines. Anything containing user data — SSIDs especially — should additionally
 go through `uiEllipsize()`, since no SSID length can be relied on.

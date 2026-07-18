@@ -38,8 +38,45 @@ bool uiBegin() {
     return true;
 }
 
+// --- Collision detection ----------------------------------------------------
+//
+// Bounds checks alone are not enough: two strings can each sit inside the
+// screen and still land on top of each other. That is exactly what shipped in
+// the first setup screen. So every string drawn in a frame is recorded, and
+// each new one is tested against its predecessors.
+
+struct TextRect {
+    int  x0, y0, x1, y1;
+    char label[24];
+};
+
+static TextRect sRects[40];
+static int sRectCount = 0;
+
+static void recordAndCheckOverlap(int x, int baseline, int width, const char *text) {
+    // ascender is above the baseline, descender is stored negative.
+    int y0 = baseline - kFont->ascender;
+    int y1 = baseline - kFont->descender;
+
+    for (int i = 0; i < sRectCount; i++) {
+        const TextRect &r = sRects[i];
+        bool overlaps = x < r.x1 && x + width > r.x0 && y0 < r.y1 && y1 > r.y0;
+        if (overlaps) {
+            Serial.printf("[layout] OVERLAP \"%.23s\" (%d,%d-%d,%d) with \"%s\"\n",
+                          text, x, y0, x + width, y1, r.label);
+        }
+    }
+
+    if (sRectCount < (int)(sizeof(sRects) / sizeof(sRects[0]))) {
+        TextRect &r = sRects[sRectCount++];
+        r.x0 = x; r.y0 = y0; r.x1 = x + width; r.y1 = y1;
+        snprintf(r.label, sizeof(r.label), "%s", text);
+    }
+}
+
 void uiClearBuffer() {
     memset(sFramebuffer, ink::kPaper, EPD_WIDTH / 2 * EPD_HEIGHT);
+    sRectCount = 0;  // new frame
 }
 
 void uiFlush() {
@@ -57,6 +94,8 @@ int uiTextWidth(const char *text) {
 }
 
 int uiDrawText(int x, int y, const char *text, uint8_t textColor) {
+    recordAndCheckOverlap(x, y, uiTextWidth(text), text);
+
     int32_t cursorX = x;
     int32_t cursorY = y;
     FontProperties props = textProps(textColor);

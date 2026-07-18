@@ -176,11 +176,15 @@ static void renderSetupScreen() {
     uiDrawTextRight(EPD_WIDTH - kMargin, 58, "Quote of the Day", ink::kTextMid);
     uiDrawRule(kMargin, kHeaderRuleY, EPD_WIDTH - 2 * kMargin, ink::kMid);
 
+    // The setup screen needs two footer lines (device details, then the hint or
+    // an error), so its rule sits higher than the quote screen's.
+    const int setupRuleY = 420;
+
     // --- Right column: QR, vertically centred in the body region ---
     const int qrScale = 5;
     const int qrSide = uiQrSize(portalQrPayload().c_str(), qrScale);
     const int qrX = EPD_WIDTH - kMargin - qrSide;
-    const int qrY = (kHeaderRuleY + kFooterRuleY) / 2 - qrSide / 2;
+    const int qrY = (kHeaderRuleY + setupRuleY) / 2 - qrSide / 2;
 
     uiDrawQr(qrX, qrY, portalQrPayload().c_str(), qrScale);
 
@@ -188,14 +192,15 @@ static void renderSetupScreen() {
     const int textX = kMargin + kGutter;
     const int textRight = qrX - 30;  // keep clear of the QR's quiet zone
 
-    // Baselines are explicit. Only ~29 characters fit in this column at the
-    // one available font size, so the copy is kept terse rather than wrapped.
-    const int phoneTitleY = 150;
-    const int phoneBodyY  = 208;
-    const int compTitleY  = 285;
-    const int compBodyY1  = 343;
-    const int compBodyY2  = 401;
-    const int detailsY    = 430;
+    // Baselines are explicit, and every gap is at least kLineHeight (58) so
+    // that consecutive 51 px line boxes cannot touch. Only ~29 characters fit
+    // in this column at the one available font size, so the copy stays terse
+    // rather than wrapping into the space below.
+    const int phoneTitleY = 145;
+    const int phoneBodyY  = 203;
+    const int compTitleY  = 280;
+    const int compBodyY1  = 338;
+    const int compBodyY2  = 396;
 
     uiDrawAccentBar(kMargin, phoneTitleY - kAscender, 6,
                     (phoneBodyY + kDescender) - (phoneTitleY - kAscender));
@@ -209,21 +214,20 @@ static void renderSetupScreen() {
     drawChecked(textX, compBodyY1, textRight, "Open improv-wifi.com", ink::kTextDark);
     drawChecked(textX, compBodyY2, textRight, "in Chrome or Edge.", ink::kTextDark);
 
-    // Network name and key for anyone who cannot scan. Sits below the QR, so it
-    // may run the full width - which is why it is not in the right column,
-    // where it previously ran off the screen edge.
+    // --- Footer: two lines, both full width ---
+    uiDrawRule(kMargin, setupRuleY, EPD_WIDTH - 2 * kMargin, ink::kLight);
+
+    // Network name and key for anyone who cannot scan. Full width here, which
+    // is why it is not beside the QR - there it ran off the screen edge.
     String details = "Network: " + portalSsid() + "   Key: " + portalPassword();
-    drawChecked(kMargin, detailsY, EPD_WIDTH - kMargin,
+    drawChecked(kMargin, 462, EPD_WIDTH - kMargin,
                 uiEllipsize(details, EPD_WIDTH - 2 * kMargin).c_str(),
                 ink::kTextMid);
-
-    // --- Footer ---
-    uiDrawRule(kMargin, kFooterRuleY, EPD_WIDTH - 2 * kMargin, ink::kLight);
 
     String footer = sSetupError.length()
                         ? sSetupError
                         : String("Hold the button 3 s to start over.");
-    drawChecked(kMargin, 505, EPD_WIDTH - kMargin,
+    drawChecked(kMargin, 520, EPD_WIDTH - kMargin,
                 uiEllipsize(footer, EPD_WIDTH - 2 * kMargin).c_str(),
                 sSetupError.length() ? ink::kTextBlack : ink::kTextMid);
 
