@@ -34,8 +34,12 @@
 // Content
 // ---------------------------------------------------------------------------
 
-// Plain-text file on the SD card. Line 1 is the quote, line 2 the author,
-// line 3 (optional) the source. Missing card or file -> built-in fallback.
+// Per-day quote files on the SD card, written by `npm run export:device`.
+// The device opens /quotes/MM-DD.tsv for today's date.
+#define QUOTE_DIR "/quotes"
+
+// Manual override, consulted only when the day file is unavailable. Line 1 is
+// the quote, line 2 the author, line 3 (optional) the dates.
 #define QUOTE_FILE "/quote.txt"
 
 // Full-screen redraws are slow and wear the panel, so keep this generous.

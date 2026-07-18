@@ -24,8 +24,10 @@ device:
 | `firmware/` | C++ | ESP32-S3 e-paper display — see [firmware/README.md](firmware/README.md) |
 | `platformio.ini` | — | Firmware build config; at the root so PlatformIO finds it on open |
 
-The two halves are independent today: the firmware reads a quote from its SD
-card and does not yet consume `data/quotes-by-day.json`.
+The firmware consumes this dataset: `npm run export:device` splits it into one
+file per calendar day for the SD card, and the display shows a quote whose
+author was born or died on today's date. See
+[firmware/README.md](firmware/README.md).
 
 ## Data sources
 
@@ -61,7 +63,8 @@ The extraction is deliberately strict — uncertain quotes are dropped, not show
 npm run fetch:people   # Wikidata  -> data/people.json
 npm run fetch:quotes   # Wikiquote -> data/quotes-raw.json
 npm run build          # bucket by day -> data/quotes-by-day.json + coverage report
-npm run all            # all three in order
+npm run export:device  # split per day -> data/device/quotes/*.tsv (for the SD card)
+npm run all            # all four in order
 ```
 
 All steps retry on transient API errors / rate-limiting. If `fetch:quotes` prints

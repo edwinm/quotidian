@@ -7,7 +7,8 @@
     "fetch:people": "node pipeline/1-fetch-people.js",
     "fetch:quotes": "node pipeline/2-fetch-quotes.js",
     "build": "node pipeline/3-build.js",
-    "all": "npm run fetch:people && npm run fetch:quotes && npm run build"
+    "all": "npm run fetch:people && npm run fetch:quotes && npm run build && npm run export:device",
+    "export:device": "node pipeline/4-export-device.js"
   },
   "license": "MIT"
 }

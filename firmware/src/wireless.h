@@ -28,6 +28,10 @@ bool timeSynced();
 // clock was never synced.
 String todayLong();
 
+// Today's date as numbers. False when the clock was never synced, in which case
+// the calendar day is genuinely unknown and no quote can be selected for it.
+bool todayParts(int *year, int *month, int *day);
+
 // Starts BLE advertising with the standard Battery Service (0x180F).
 void bleBegin();
 

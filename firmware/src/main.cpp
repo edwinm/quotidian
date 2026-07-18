@@ -39,7 +39,10 @@ static constexpr int kColumnWidth  = kContentRight - kTextX;
 static const Quote kFallbackQuote = {
     "I think, therefore I am",
     "René Descartes",
-    "31 March 1596 - 11 February 1650",
+    "31 March 1596 - ",   // prefix
+    "11 February",        // bold: the run that matches today
+    " 1650",              // suffix
+    "Wikiquote · CC BY-SA 4.0",
 };
 
 enum Mode {
@@ -77,14 +80,13 @@ static void drawQuote() {
     const int authorHeight = uiLineHeight(Font::BodyBold);
     const int sourceGap    = 14;
 
-    std::vector<String> sourceLines;
-    if (sQuote.source.length()) {
-        sourceLines = uiWrapText(Font::Small, sQuote.source, kColumnWidth);
-    }
-    const int sourceHeight =
-        sourceLines.empty() ? 0 : sourceGap + sourceLines.size() * uiLineHeight(Font::Small);
+    const bool hasDates = sQuote.datesBold.length() || sQuote.datesPrefix.length() ||
+                          sQuote.datesSuffix.length();
+    const int datesHeight = hasDates ? sourceGap + uiLineHeight(Font::Small) : 0;
+    const int attribHeight =
+        sQuote.attribution.length() ? 10 + uiLineHeight(Font::Small) : 0;
 
-    const int total = bodyHeight + authorGap + authorHeight + sourceHeight;
+    const int total = bodyHeight + authorGap + authorHeight + datesHeight + attribHeight;
 
     int top = kQuoteTop + ((kQuoteBottom - kQuoteTop) - total) / 2;
     if (top < kQuoteTop) top = kQuoteTop;
@@ -104,10 +106,35 @@ static void drawQuote() {
                uiEllipsize(Font::BodyBold, author, kColumnWidth).c_str(),
                ink::kTextBlack);
 
-    y += (authorHeight - uiAscender(Font::BodyBold)) + sourceGap + uiAscender(Font::Small);
-    for (const String &line : sourceLines) {
-        uiDrawText(Font::Small, kTextX, y, line.c_str(), ink::kTextMid);
+    // Dates, drawn as three runs on one baseline. The middle run is the day and
+    // month that match today, set bold and black so the link to the date in the
+    // header is visible at a glance; the years stay regular and grey.
+    if (hasDates) {
+        y += (authorHeight - uiAscender(Font::BodyBold)) + sourceGap +
+             uiAscender(Font::Small);
+
+        String suffix = sQuote.datesSuffix;
+        int used = uiTextWidth(Font::Small, sQuote.datesPrefix.c_str()) +
+                   uiTextWidth(Font::SmallBold, sQuote.datesBold.c_str());
+        if (used + uiTextWidth(Font::Small, suffix.c_str()) > kColumnWidth) {
+            suffix = uiEllipsize(Font::Small, suffix, kColumnWidth - used);
+        }
+
+        int x = kTextX;
+        x = uiDrawText(Font::Small, x, y, sQuote.datesPrefix.c_str(), ink::kTextMid);
+        x = uiDrawText(Font::SmallBold, x, y, sQuote.datesBold.c_str(), ink::kTextBlack);
+        uiDrawText(Font::Small, x, y, suffix.c_str(), ink::kTextMid);
+
         y += uiLineHeight(Font::Small);
+    }
+
+    // Attribution. The corpus is CC BY-SA, which requires crediting the source
+    // and naming the licence wherever the quote is shown.
+    if (sQuote.attribution.length()) {
+        y += 10 + uiAscender(Font::Small);
+        uiDrawText(Font::Small, kTextX, y,
+                   uiEllipsize(Font::Small, sQuote.attribution, kColumnWidth).c_str(),
+                   ink::kTextLight);
     }
 }
 
@@ -243,11 +270,21 @@ static void renderMessage(const char *title, const char *detail) {
 
 // --- Content ----------------------------------------------------------------
 
+// Today's quote comes from the day file matching the calendar date, so the
+// author's birth or death day is always today. Without a synced clock the day
+// is genuinely unknown, and picking one would be a guess - so the built-in
+// quote is used instead.
 static void loadQuote() {
-    if (!storageReadQuote(sQuote)) {
-        sQuote = kFallbackQuote;
-        Serial.println("[content] using built-in fallback quote");
+    int year, month, day;
+    if (todayParts(&year, &month, &day) &&
+        storageReadQuoteForDay(month, day, year, sQuote)) {
+        return;
     }
+
+    if (storageReadOverrideQuote(sQuote)) return;
+
+    sQuote = kFallbackQuote;
+    Serial.println("[content] using built-in fallback quote");
 }
 
 // --- Mode transitions -------------------------------------------------------
@@ -255,6 +292,9 @@ static void loadQuote() {
 static void enterRunningMode() {
     sMode = MODE_RUNNING;
     sSetupError = "";
+
+    // Only now is the clock synced, so only now can today's quote be chosen.
+    loadQuote();
 
     improvSetProvisioned(true);
     if (!bleActive()) bleBegin();
@@ -353,8 +393,6 @@ void setup() {
     sButton.setLongClickDetectedHandler(onLongPress);
 
     storageBegin();
-    loadQuote();
-
     improvBegin(onImprovCredentials);
 
     if (settingsHasCredentials() && wifiBegin()) {
@@ -392,10 +430,7 @@ void loop() {
 
     if (wasConnected) wifiBegin();
 
-    if (storageMounted()) {
-        Quote fresh;
-        if (storageReadQuote(fresh)) sQuote = fresh;
-    }
+    if (storageMounted()) loadQuote();
 
     renderQuoteScreen();
     sNextRefresh = millis() + REFRESH_INTERVAL_MS;

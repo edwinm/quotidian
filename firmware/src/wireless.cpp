@@ -87,6 +87,16 @@ String todayLong() {
     return out;
 }
 
+bool todayParts(int *year, int *month, int *day) {
+    struct tm timeinfo;
+    if (!sTimeSynced || !getLocalTime(&timeinfo, 0)) return false;
+
+    *year  = timeinfo.tm_year + 1900;
+    *month = timeinfo.tm_mon + 1;
+    *day   = timeinfo.tm_mday;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // BLE
 // ---------------------------------------------------------------------------

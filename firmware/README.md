@@ -79,7 +79,8 @@ Improv has no channel for timezone data, so devices provisioned over USB keep
 | Improv Serial provisioning | [src/improv.cpp](src/improv.cpp) | Full protocol, shares the log port |
 | Captive portal + QR | [src/portal.cpp](src/portal.cpp) | SoftAP, DNS wildcard, browser timezone |
 | Credential storage | [src/settings.cpp](src/settings.cpp) | NVS via `Preferences` |
-| microSD | [src/storage.cpp](src/storage.cpp) | SPI, reads `/quote.txt` |
+| microSD | [src/storage.cpp](src/storage.cpp) | SPI, reads today's `/quotes/MM-DD.tsv` |
+| Device export | [../pipeline/4-export-device.js](../pipeline/4-export-device.js) | 24 MB JSON → 366 small files |
 | Battery indicator | [src/battery.cpp](src/battery.cpp) | ADC + eFuse Vref calibration |
 | Wi-Fi + NTP | [src/wireless.cpp](src/wireless.cpp) | Station mode, timezone-aware |
 | BLE | [src/wireless.cpp](src/wireless.cpp) | Standard Battery Service (0x180F) |
@@ -120,11 +121,10 @@ The panel has 16 grey levels. The sketch allocates a `960 × 540 ÷ 2` byte
 framebuffer in PSRAM (two 4-bit pixels per byte) and draws everything into it,
 flushing once with `epd_draw_grayscale_image()`.
 
-Text anti-aliasing comes for free from that choice. The bundled FiraSans glyph
-bitmaps store per-pixel *coverage* rather than on/off bits, and the renderer
-blends foreground into background through a 16-entry LUT — but only when a
-framebuffer is supplied. Passing `NULL` for direct drawing collapses the type
-to 1-bit, so `uiDrawText()` always renders into the buffer.
+Text anti-aliasing comes for free from that choice. The generated glyph bitmaps
+store per-pixel *coverage* rather than on/off bits, and `drawGlyph()` blends
+that coverage from paper toward the foreground through a 16-entry ramp. Pixels
+with zero coverage are skipped, so whatever is underneath shows through.
 
 Two colour scales are in play, which is easy to trip over: shapes take 8-bit
 values (`0x00`–`0xFF`), text takes 4-bit values (`0`–`15`). Both are named in
@@ -152,20 +152,17 @@ voltage threshold.
 
 ### Verifying layout without looking at the screen
 
-There is only one font, its line box is 51 px tall, and text width is easy to
-underestimate — roughly **19 px per character**, not the ~14 you might guess.
-Overflows are invisible from the build machine.
+Text is wider than you expect — at 36 px the type runs about 19 px per
+character — and overflows are invisible from the build machine.
 
-So text goes through `drawChecked()`, which measures before drawing and logs
-any string that would leave its box:
+`uiDrawText()` therefore checks every string it draws, with no opt-in from
+callers. It reports strings that leave the canvas:
 
 ```
-[layout] OVERFLOW right: x=110 w=657 end=767 limit=685 "Scan the code and follow the page."
+[layout] OFF-CANVAS x: 110..767 (canvas 0..540) "Scan the code and follow"
 ```
 
-Two checks run. `drawChecked()` tests each string against its column bounds;
-`uiDrawText()` additionally records every string drawn in a frame and reports
-when a new one intersects an earlier one:
+and, separately, strings that land on top of earlier ones in the same frame:
 
 ```
 [layout] OVERLAP "Network: QuoteDisplay-8" (40,391-854,442) with "in Chrome or Edge."
@@ -179,9 +176,10 @@ Watch the serial monitor after a redraw; a clean boot prints no `[layout]`
 lines. Anything containing user data — SSIDs especially — should additionally
 go through `uiEllipsize()`, since no SSID length can be relied on.
 
-This caught both bugs in the first setup-screen layout: the left column ran
-past the footer rule and through the footer text, and the network name and key
-overran the right screen edge.
+The overlap check exists because bounds checking alone reported a clean screen
+while the setup layout was visibly broken: two strings each sat inside the
+canvas and still collided. Both checks were confirmed to fire by reintroducing
+the real defect and reflashing.
 
 ### Captive portal — why it does not connect inline
 
@@ -198,20 +196,69 @@ Having a display is what makes that trade acceptable.
 Improv does not have this problem: the USB link is unaffected by retuning
 Wi-Fi, so it connects inline and reports status through the protocol.
 
-### SD card
+### SD card and why the dataset lives there
 
-Copy [sdcard/quote.txt](sdcard/quote.txt) to the root of a FAT32-formatted
-card. The format is three lines — quote, author, source — with the third
-optional:
+The full dataset (`data/quotes-by-day.json`) is **24 MB**. It fits nowhere on
+this device:
 
+| Store | Capacity | Verdict |
+| --- | --- | --- |
+| Internal flash | 16 MB total, 6.5 MB app partition | too small |
+| PSRAM | 8 MB | too small |
+| SD card | GBs | fits easily |
+
+So `npm run export:device` splits it into one file per calendar day, keeping
+only the fields that get rendered. That comes to **7.8 MB across 366 files**,
+the largest day being 40 kB. The device opens exactly one — so no more than
+40 kB is ever in RAM, and nothing has to be streamed or indexed.
+
+Worth knowing: at 7.8 MB the *exported* set would also fit in internal flash
+with a custom partition table (single app slot, no OTA, ~13 MB FFat). The SD
+card was kept because the dataset can then be refreshed by swapping a card
+instead of reflashing.
+
+Copy the export to the card root as `/quotes/`:
+
+```bash
+npm run export:device
+cp -r data/device/quotes /Volumes/YOUR_CARD/
 ```
-The unexamined life is not worth living
-Socrates
-Plato, Apology, 38a
-```
 
-No card, no file, or an empty file all fall back to a built-in quote, so the
-board still shows something sensible on a bare desk.
+The format is tab-separated, one quote per line, in the field order
+`text, author, datesPrefix, datesBold, datesSuffix, attribution`. It is not
+JSON on purpose — the device needs no parser, just a line count and a split on
+tabs.
+
+### Picking today's quote
+
+Every quote is keyed to the day of its author's birth or death, so the file for
+today's date holds only people connected to today. Days contain 22 to 212
+quotes; one is chosen by `year % count`, which is stable within a day and moves
+on from one year to the next.
+
+The **day and month that match today are drawn bold and black**, while the years
+stay regular and grey — so the tie between the quote and the date in the header
+is visible without reading it:
+
+> 1122 &ndash; **18 July** 1192
+
+The pre-split is done by the exporter, not the firmware, so the device never
+parses a date string. Years can carry a `BC` suffix, which that split handles.
+
+Without a synced clock the calendar day is genuinely unknown. Rather than guess,
+the device shows its built-in quote — note that its bold date will *not* be
+today, since no day was matched.
+
+### Attribution
+
+The corpus is CC BY-SA 4.0 and `attributionRequired` is true for **all 41 363**
+quotes, so the credit line always renders:
+
+> Wikiquote &middot; CC BY-SA 4.0
+
+Author and licence are shown alongside the quote itself. The flag is still
+honoured per quote rather than hard-coded, so a future source that does not
+require attribution simply renders without it.
 
 ## Refresh behaviour
 

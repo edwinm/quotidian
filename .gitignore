@@ -8,3 +8,6 @@ node_modules/
 # Regenerable pipeline intermediates (large). Rebuild with `npm run all`.
 data/people.json
 data/quotes-raw.json
+
+# Device export, regenerable from quotes-by-day.json with `npm run export:device`.
+data/device/
