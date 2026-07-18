@@ -105,9 +105,24 @@ def main():
     ap.add_argument("size", type=int, help="pixel size")
     ap.add_argument("ttf", help="source TrueType file")
     ap.add_argument("-o", "--out", required=True)
+    ap.add_argument("-i", "--index", type=int, default=0,
+                    help="face index within a .ttc collection (see --list)")
+    ap.add_argument("--list", action="store_true",
+                    help="print the faces in the file and exit")
     args = ap.parse_args()
 
-    face = freetype.Face(os.path.expanduser(args.ttf))
+    path = os.path.expanduser(args.ttf)
+
+    # macOS ships its classic families as .ttc collections, where the weights
+    # live side by side in one file and index 0 is not necessarily Regular.
+    if args.list:
+        count = freetype.Face(path).num_faces
+        for i in range(count):
+            f = freetype.Face(path, index=i)
+            print(f"  {i}: {f.family_name.decode()} - {f.style_name.decode()}")
+        return
+
+    face = freetype.Face(path, index=args.index)
     bitmaps, glyphs, intervals, metrics = build(face, args.size)
     emit(args.name, bitmaps, glyphs, intervals, metrics, args.out)
 

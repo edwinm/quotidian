@@ -107,13 +107,27 @@ The display library ships one font. [tools/fontconvert.py](tools/fontconvert.py)
 generates the rest from any TrueType file:
 
 ```bash
-python3 tools/fontconvert.py FontBody 26 ~/Library/Fonts/Roboto-Regular.ttf \
-    -o src/fonts/font_body.h
+# macOS ships its classic families as .ttc collections; pick the weight by index
+python3 tools/fontconvert.py --list x 0 /System/Library/Fonts/Supplemental/GillSans.ttc
+python3 tools/fontconvert.py FontBody 26 \
+    /System/Library/Fonts/Supplemental/GillSans.ttc -i 0 -o src/fonts/font_body.h
 ```
 
-Six are checked in (Roboto regular and bold at 18, 26 and 36 px), covering ASCII
-and Latin-1. Bitmaps are **uncompressed** on purpose — the rotating blitter reads
-them directly and would otherwise need zlib. That costs about 154 kB of flash.
+Six are checked in — **Gill Sans** regular and bold at 18, 26 and 36 px, covering
+ASCII and Latin-1. Bitmaps are **uncompressed** on purpose: the rotating blitter
+reads them directly and would otherwise need zlib. That costs about 157 kB of
+flash.
+
+Gill Sans (Eric Gill, 1928) was chosen to suit the 1930s frame the display sits
+in. Of the period faces it is the most legible at these sizes: Futura is more
+emblematic of the era but has a low x-height and near-identical round letters,
+and the Didones that look most Art Deco — Bodoni, Didot — have hairlines thinner
+than a pixel at 18 px and break up entirely on this panel.
+
+**Licensing:** Gill Sans is proprietary and bundled with macOS, and these headers
+contain its rasterised outlines. That is fine for a private build; if this repo
+is ever published, swap in a freely licensed face. Roboto (Apache 2.0) was the
+previous choice and regenerates with the same command.
 
 ### Grayscale and anti-aliasing
 
