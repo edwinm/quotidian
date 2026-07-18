@@ -2,48 +2,72 @@
 
 #include <qrcode.h>
 
-#include "firasans.h"
+#include "fonts/font_body.h"
+#include "fonts/font_body_bold.h"
+#include "fonts/font_large.h"
+#include "fonts/font_small.h"
+#include "fonts/font_small_bold.h"
+#include "fonts/font_title.h"
 
-// Version 4 (33x33 modules) holds 78 bytes at ECC_LOW - ample for a Wi-Fi
-// join payload, which runs to roughly 45 characters.
-static constexpr uint8_t kQrVersion = 4;
-static constexpr uint8_t kQrQuietZone = 4;  // modules, mandated by the spec
+// Quarter turn counter-clockwise. Flip to false if the display ends up upside
+// down for the way the device is actually stood up.
+static constexpr bool UI_ROTATE_CCW = true;
 
 static uint8_t *sFramebuffer = nullptr;
 
-// The bundled FiraSans is the only font in the library: advance_y 50,
-// ascender 39, descender -12.
-static const GFXfont *kFont = &FiraSans;
+// Version 4 (33x33 modules) holds 78 bytes at ECC_LOW - ample for a Wi-Fi join
+// payload, which runs to roughly 45 characters.
+static constexpr uint8_t kQrVersion = 4;
+static constexpr uint8_t kQrQuietZone = 4;  // modules, mandated by the spec
 
-static FontProperties textProps(uint8_t textColor) {
-    FontProperties props = {};
-    props.fg_color = textColor;
-    props.bg_color = ink::kTextPaper;
-    props.fallback_glyph = '?';
-    props.flags = 0;
-    return props;
+static const GFXfont *fontFor(Font font) {
+    switch (font) {
+        case Font::Small:     return &FontSmall;
+        case Font::SmallBold: return &FontSmallBold;
+        case Font::Body:      return &FontBody;
+        case Font::BodyBold:  return &FontBodyBold;
+        case Font::Large:     return &FontLarge;
+        case Font::Title:     return &FontTitle;
+    }
+    return &FontBody;
 }
 
-bool uiBegin() {
-    epd_init();
+// --- Rotation ---------------------------------------------------------------
+//
+// Portrait (lx, ly) -> landscape framebuffer. Counter-clockwise sends the
+// portrait top edge to the left edge of the panel.
 
-    // 4 bits per pixel, two pixels per byte.
-    sFramebuffer = (uint8_t *)heap_caps_malloc(EPD_WIDTH / 2 * EPD_HEIGHT, MALLOC_CAP_SPIRAM);
-    if (!sFramebuffer) {
-        Serial.println("[ui] framebuffer allocation failed - is PSRAM enabled?");
-        return false;
+static inline void mapPoint(int lx, int ly, int *px, int *py) {
+    if (UI_ROTATE_CCW) {
+        *px = ly;
+        *py = (UI_WIDTH - 1) - lx;
+    } else {
+        *px = (UI_HEIGHT - 1) - ly;
+        *py = lx;
     }
+}
 
-    uiClearBuffer();
-    return true;
+static inline void putPixel4(int lx, int ly, uint8_t value) {
+    if (lx < 0 || lx >= UI_WIDTH || ly < 0 || ly >= UI_HEIGHT) return;
+
+    int px, py;
+    mapPoint(lx, ly, &px, &py);
+
+    uint32_t pos = (uint32_t)py * (EPD_WIDTH / 2) + (px >> 1);
+    uint8_t old = sFramebuffer[pos];
+    if (px & 1) {
+        sFramebuffer[pos] = (old & 0x0F) | (value << 4);
+    } else {
+        sFramebuffer[pos] = (old & 0xF0) | value;
+    }
 }
 
 // --- Collision detection ----------------------------------------------------
 //
 // Bounds checks alone are not enough: two strings can each sit inside the
 // screen and still land on top of each other. That is exactly what shipped in
-// the first setup screen. So every string drawn in a frame is recorded, and
-// each new one is tested against its predecessors.
+// the first setup screen, so every string drawn in a frame is recorded and
+// tested against its predecessors.
 
 struct TextRect {
     int  x0, y0, x1, y1;
@@ -53,10 +77,15 @@ struct TextRect {
 static TextRect sRects[40];
 static int sRectCount = 0;
 
-static void recordAndCheckOverlap(int x, int baseline, int width, const char *text) {
-    // ascender is above the baseline, descender is stored negative.
-    int y0 = baseline - kFont->ascender;
-    int y1 = baseline - kFont->descender;
+static void recordAndCheckOverlap(int x, int y0, int y1, int width, const char *text) {
+    if (x < 0 || x + width > UI_WIDTH) {
+        Serial.printf("[layout] OFF-CANVAS x: %d..%d (canvas 0..%d) \"%.23s\"\n",
+                      x, x + width, UI_WIDTH, text);
+    }
+    if (y0 < 0 || y1 > UI_HEIGHT) {
+        Serial.printf("[layout] OFF-CANVAS y: %d..%d (canvas 0..%d) \"%.23s\"\n",
+                      y0, y1, UI_HEIGHT, text);
+    }
 
     for (int i = 0; i < sRectCount; i++) {
         const TextRect &r = sRects[i];
@@ -74,9 +103,25 @@ static void recordAndCheckOverlap(int x, int baseline, int width, const char *te
     }
 }
 
+// --- Lifecycle --------------------------------------------------------------
+
+bool uiBegin() {
+    epd_init();
+
+    // 4 bits per pixel, two pixels per byte.
+    sFramebuffer = (uint8_t *)heap_caps_malloc(EPD_WIDTH / 2 * EPD_HEIGHT, MALLOC_CAP_SPIRAM);
+    if (!sFramebuffer) {
+        Serial.println("[ui] framebuffer allocation failed - is PSRAM enabled?");
+        return false;
+    }
+
+    uiClearBuffer();
+    return true;
+}
+
 void uiClearBuffer() {
     memset(sFramebuffer, ink::kPaper, EPD_WIDTH / 2 * EPD_HEIGHT);
-    sRectCount = 0;  // new frame
+    sRectCount = 0;
 }
 
 void uiFlush() {
@@ -86,42 +131,111 @@ void uiFlush() {
     epd_poweroff_all();
 }
 
-int uiTextWidth(const char *text) {
-    int32_t x = 0, y = 0, x1 = 0, y1 = 0, w = 0, h = 0;
-    FontProperties props = textProps(ink::kTextBlack);
-    get_text_bounds(kFont, text, &x, &y, &x1, &y1, &w, &h, &props);
-    return (int)w;
+// --- Text -------------------------------------------------------------------
+
+// Minimal UTF-8 decode. Advances `p` past the sequence.
+static uint32_t nextCodepoint(const char **p) {
+    const uint8_t *s = (const uint8_t *)*p;
+    uint32_t cp = *s;
+
+    if (cp < 0x80) {
+        *p += 1;
+    } else if ((cp & 0xE0) == 0xC0) {
+        cp = ((cp & 0x1F) << 6) | (s[1] & 0x3F);
+        *p += 2;
+    } else if ((cp & 0xF0) == 0xE0) {
+        cp = ((cp & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        *p += 3;
+    } else {
+        cp = ((cp & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+        *p += 4;
+    }
+    return cp;
 }
 
-int uiDrawText(int x, int y, const char *text, uint8_t textColor) {
-    recordAndCheckOverlap(x, y, uiTextWidth(text), text);
-
-    int32_t cursorX = x;
-    int32_t cursorY = y;
-    FontProperties props = textProps(textColor);
-    // Drawing into the framebuffer (rather than passing NULL for direct output)
-    // is what preserves the glyphs' grayscale edges.
-    write_mode(kFont, text, &cursorX, &cursorY, sFramebuffer, BLACK_ON_WHITE, &props);
-    return (int)cursorX;
+static GFXglyph *glyphFor(const GFXfont *f, uint32_t cp) {
+    GFXglyph *g = nullptr;
+    get_glyph(f, cp, &g);
+    if (!g) get_glyph(f, '?', &g);
+    return g;
 }
 
-void uiDrawTextRight(int xRight, int y, const char *text, uint8_t textColor) {
-    uiDrawText(xRight - uiTextWidth(text), y, text, textColor);
+int uiTextWidth(Font font, const char *text) {
+    const GFXfont *f = fontFor(font);
+    int width = 0;
+    const char *p = text;
+    while (*p) {
+        GFXglyph *g = glyphFor(f, nextCodepoint(&p));
+        if (g) width += g->advance_x;
+    }
+    return width;
 }
 
-std::vector<String> uiWrapText(const String &text, int maxWidth) {
+int uiLineHeight(Font font) { return fontFor(font)->advance_y; }
+int uiAscender(Font font)   { return fontFor(font)->ascender; }
+int uiDescender(Font font)  { return -fontFor(font)->descender; }
+
+// Draws one glyph into the portrait canvas, blending its coverage toward the
+// foreground so edges stay anti-aliased. Zero-coverage pixels are skipped so
+// whatever is underneath shows through.
+static void drawGlyph(const GFXfont *f, GFXglyph *g, int x, int baseline, uint8_t fg) {
+    const uint8_t *bitmap = f->bitmap + g->data_offset;
+    int byteWidth = g->width / 2 + g->width % 2;
+
+    uint8_t ramp[16];
+    for (int c = 0; c < 16; c++) {
+        ramp[c] = (uint8_t)(ink::kTextPaper + c * ((int)fg - ink::kTextPaper) / 15);
+    }
+
+    for (int gy = 0; gy < g->height; gy++) {
+        int ly = baseline - g->top + gy;
+        for (int gx = 0; gx < g->width; gx++) {
+            uint8_t byte = bitmap[gy * byteWidth + gx / 2];
+            uint8_t coverage = (gx & 1) ? (byte >> 4) : (byte & 0x0F);
+            if (coverage == 0) continue;
+            putPixel4(x + g->left + gx, ly, ramp[coverage]);
+        }
+    }
+}
+
+int uiDrawText(Font font, int x, int y, const char *text, uint8_t textColor) {
+    const GFXfont *f = fontFor(font);
+
+    recordAndCheckOverlap(x, y - f->ascender, y - f->descender,
+                          uiTextWidth(font, text), text);
+
+    int cursor = x;
+    const char *p = text;
+    while (*p) {
+        GFXglyph *g = glyphFor(f, nextCodepoint(&p));
+        if (!g) continue;
+        drawGlyph(f, g, cursor, y, textColor);
+        cursor += g->advance_x;
+    }
+    return cursor;
+}
+
+void uiDrawTextRight(Font font, int xRight, int y, const char *text, uint8_t textColor) {
+    uiDrawText(font, xRight - uiTextWidth(font, text), y, text, textColor);
+}
+
+void uiDrawTextCenter(Font font, int xCenter, int y, const char *text, uint8_t textColor) {
+    uiDrawText(font, xCenter - uiTextWidth(font, text) / 2, y, text, textColor);
+}
+
+std::vector<String> uiWrapText(Font font, const String &text, int maxWidth) {
     std::vector<String> lines;
     String line;
 
     int start = 0;
-    while (start <= text.length()) {
+    while (start <= (int)text.length()) {
         int space = text.indexOf(' ', start);
         if (space < 0) space = text.length();
 
         String word = text.substring(start, space);
         if (word.length() > 0) {
             String candidate = line.length() ? line + " " + word : word;
-            if (uiTextWidth(candidate.c_str()) > maxWidth && line.length()) {
+            if (uiTextWidth(font, candidate.c_str()) > maxWidth && line.length()) {
                 lines.push_back(line);
                 line = word;
             } else {
@@ -135,18 +249,34 @@ std::vector<String> uiWrapText(const String &text, int maxWidth) {
     return lines;
 }
 
-String uiEllipsize(const String &text, int maxWidth) {
-    if (uiTextWidth(text.c_str()) <= maxWidth) return text;
+String uiEllipsize(Font font, const String &text, int maxWidth) {
+    if (uiTextWidth(font, text.c_str()) <= maxWidth) return text;
 
     String out = text;
-    while (out.length() > 1 && uiTextWidth((out + "...").c_str()) > maxWidth) {
+    while (out.length() > 1 && uiTextWidth(font, (out + "...").c_str()) > maxWidth) {
         out.remove(out.length() - 1);
     }
     return out + "...";
 }
 
+// --- Shapes -----------------------------------------------------------------
+
+void uiFillRect(int x, int y, int w, int h, uint8_t color) {
+    if (w <= 0 || h <= 0) return;
+
+    // A rotated rectangle is still a rectangle, so this maps the whole shape
+    // once and lets the driver fill it, rather than going pixel by pixel.
+    int px, py;
+    if (UI_ROTATE_CCW) {
+        mapPoint(x + w - 1, y, &px, &py);
+    } else {
+        mapPoint(x, y + h - 1, &px, &py);
+    }
+    epd_fill_rect(px, py, h, w, color, sFramebuffer);
+}
+
 void uiDrawRule(int x, int y, int width, uint8_t color) {
-    epd_draw_hline(x, y, width, color, sFramebuffer);
+    uiFillRect(x, y, width, 1, color);
 }
 
 void uiDrawAccentBar(int x, int y, int width, int height) {
@@ -155,14 +285,40 @@ void uiDrawAccentBar(int x, int y, int width, int height) {
     for (int i = 0; i < height; i++) {
         float t = (float)i / (float)(height - 1);
         uint8_t shade = (uint8_t)(ink::kDark + t * (ink::kLight - ink::kDark));
-        epd_draw_hline(x, y + i, width, shade, sFramebuffer);
+        uiFillRect(x, y + i, width, 1, shade);
+    }
+}
+
+void uiDrawBattery(int x, int y, int percent) {
+    const int w = 40;
+    const int h = 20;
+    const int nubW = 4;
+    const int nubH = 9;
+
+    uiFillRect(x, y, w, 2, ink::kDark);
+    uiFillRect(x, y + h - 2, w, 2, ink::kDark);
+    uiFillRect(x, y, 2, h, ink::kDark);
+    uiFillRect(x + w - 2, y, 2, h, ink::kDark);
+    uiFillRect(x + w, y + (h - nubH) / 2, nubW, nubH, ink::kDark);
+
+    if (percent < 0) {
+        uiFillRect(x + 10, y + h / 2, w - 20, 2, ink::kMid);
+        return;
+    }
+
+    const int inset = 4;
+    const int trackW = w - inset * 2;
+    int fillW = (trackW * constrain(percent, 0, 100)) / 100;
+
+    uiFillRect(x + inset, y + inset, trackW, h - inset * 2, ink::kLight);
+    if (fillW > 0) {
+        uiFillRect(x + inset, y + inset, fillW, h - inset * 2, ink::kDark);
     }
 }
 
 int uiQrSize(const char *text, int scale) {
     (void)text;  // module count follows from the version alone
-    int modules = 4 * kQrVersion + 17;
-    return (modules + 2 * kQrQuietZone) * scale;
+    return (4 * kQrVersion + 17 + 2 * kQrQuietZone) * scale;
 }
 
 int uiDrawQr(int x, int y, const char *text, int scale) {
@@ -177,44 +333,16 @@ int uiDrawQr(int x, int y, const char *text, int scale) {
     int side = (qrcode.size + 2 * kQrQuietZone) * scale;
 
     // The quiet zone must be paper-white or scanners struggle to lock on.
-    epd_fill_rect(x, y, side, side, ink::kPaper, sFramebuffer);
+    uiFillRect(x, y, side, side, ink::kPaper);
 
     int origin = kQrQuietZone * scale;
     for (uint8_t my = 0; my < qrcode.size; my++) {
         for (uint8_t mx = 0; mx < qrcode.size; mx++) {
             if (!qrcode_getModule(&qrcode, mx, my)) continue;
-            epd_fill_rect(x + origin + mx * scale, y + origin + my * scale,
-                          scale, scale, ink::kBlack, sFramebuffer);
+            uiFillRect(x + origin + mx * scale, y + origin + my * scale,
+                       scale, scale, ink::kBlack);
         }
     }
 
     return side;
-}
-
-void uiDrawBattery(int x, int y, int percent) {
-    const int w = 54;
-    const int h = 26;
-    const int nubW = 5;
-    const int nubH = 12;
-
-    epd_draw_rect(x, y, w, h, ink::kDark, sFramebuffer);
-    epd_fill_rect(x + w, y + (h - nubH) / 2, nubW, nubH, ink::kDark, sFramebuffer);
-
-    if (percent < 0) {
-        // No battery detected - running off USB.
-        epd_draw_hline(x + 14, y + h / 2, w - 28, ink::kMid, sFramebuffer);
-        return;
-    }
-
-    const int inset = 4;
-    const int trackW = w - inset * 2;
-    int fillW = (trackW * constrain(percent, 0, 100)) / 100;
-
-    // Light wash over the whole track, solid fill for the charge itself. Both
-    // are mid-greys rather than black, so the icon stays visually quieter than
-    // the text next to it.
-    epd_fill_rect(x + inset, y + inset, trackW, h - inset * 2, ink::kLight, sFramebuffer);
-    if (fillW > 0) {
-        epd_fill_rect(x + inset, y + inset, fillW, h - inset * 2, ink::kDark, sFramebuffer);
-    }
 }

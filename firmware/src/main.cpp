@@ -1,8 +1,8 @@
 /**
  * Quote of the Day - LilyGo T5 4.7" e-paper (ESP32-S3), non-touch version.
  *
- * Renders a quote full-screen in anti-aliased grayscale type, with a status
- * footer showing Wi-Fi, SD card, Bluetooth and battery state.
+ * Portrait orientation: the 960x540 panel is driven through a 540x960 canvas
+ * rotated a quarter turn counter-clockwise (see ui.h).
  *
  * Wi-Fi is provisioned at runtime by either route:
  *   - Improv over USB serial, from a Chromium browser;
@@ -29,13 +29,11 @@
 
 // --- Layout -----------------------------------------------------------------
 
-static constexpr int kMargin      = 40;
-static constexpr int kGutter      = 70;   // room for the decorative accent bar
-static constexpr int kLineHeight  = 58;   // FiraSans advance_y is 50; a little air
-static constexpr int kHeaderRuleY = 84;
-static constexpr int kFooterRuleY = 452;
-static constexpr int kBodyTop     = 130;
-static constexpr int kBodyBottom  = 430;
+static constexpr int kMargin = 36;
+static constexpr int kGutter = 28;  // indent past the accent bar
+static constexpr int kTextX  = kMargin + kGutter;
+static constexpr int kContentRight = UI_WIDTH - kMargin;
+static constexpr int kColumnWidth  = kContentRight - kTextX;
 
 // Shown when there is no SD card, or no readable quote file on it.
 static const Quote kFallbackQuote = {
@@ -64,187 +62,182 @@ static String sPendingPassword;
 // Populated when a connection attempt fails, so the setup screen can say why.
 static String sSetupError;
 
-// FiraSans metrics, needed to reason about where glyphs actually land relative
-// to their baseline.
-static constexpr int kAscender  = 39;
-static constexpr int kDescender = 12;
-
-// Draws text and reports on the serial log when it would leave the intended
-// box. The e-paper cannot be inspected from the build machine, so this is how
-// layout regressions get caught - see "Verifying layout" in the README.
-static void drawChecked(int x, int baseline, int rightLimit, const char *text,
-                        uint8_t color) {
-    int w = uiTextWidth(text);
-    if (x + w > rightLimit) {
-        Serial.printf("[layout] OVERFLOW right: x=%d w=%d end=%d limit=%d \"%s\"\n",
-                      x, w, x + w, rightLimit, text);
-    }
-    if (baseline + kDescender > EPD_HEIGHT) {
-        Serial.printf("[layout] OVERFLOW bottom: baseline=%d \"%s\"\n", baseline, text);
-    }
-    uiDrawText(x, baseline, text, color);
-}
-
 // --- Quote screen -----------------------------------------------------------
 
-static void drawHeader() {
-    uiDrawText(kMargin, 58, "QUOTE OF THE DAY", ink::kTextMid);
-    uiDrawTextRight(EPD_WIDTH - kMargin, 58, todayLong().c_str(), ink::kTextMid);
-    uiDrawRule(kMargin, kHeaderRuleY, EPD_WIDTH - 2 * kMargin, ink::kMid);
-}
+static constexpr int kQuoteTop    = 120;
+static constexpr int kQuoteBottom = 820;
+static constexpr int kQuoteLead   = 46;  // leading for Font::Large (42 px box)
 
 static void drawQuote() {
-    const int textX = kMargin + kGutter;
-    const int maxWidth = EPD_WIDTH - textX - kMargin;
+    std::vector<String> lines = uiWrapText(Font::Large, sQuote.text, kColumnWidth);
 
-    std::vector<String> lines = uiWrapText(sQuote.text, maxWidth);
+    // Measure the whole block first so it can be optically centred.
+    const int bodyHeight   = lines.size() * kQuoteLead;
+    const int authorGap    = 42;
+    const int authorHeight = uiLineHeight(Font::BodyBold);
+    const int sourceGap    = 14;
 
-    // Attribution sits one blank line below the quote body.
-    int blockHeight = lines.size() * kLineHeight + kLineHeight;
-    if (sQuote.source.length()) blockHeight += kLineHeight;
+    std::vector<String> sourceLines;
+    if (sQuote.source.length()) {
+        sourceLines = uiWrapText(Font::Small, sQuote.source, kColumnWidth);
+    }
+    const int sourceHeight =
+        sourceLines.empty() ? 0 : sourceGap + sourceLines.size() * uiLineHeight(Font::Small);
 
-    int top = kBodyTop + ((kBodyBottom - kBodyTop) - blockHeight) / 2;
-    if (top < kBodyTop) top = kBodyTop;
+    const int total = bodyHeight + authorGap + authorHeight + sourceHeight;
 
-    // Accent bar in the gutter, spanning just the quote body. The bundled font
-    // only covers ASCII + Latin-1, so a typographic quote mark is not an
-    // option here - a grey ramp does the decorative work instead.
-    uiDrawAccentBar(kMargin, top + 12, 6, lines.size() * kLineHeight);
+    int top = kQuoteTop + ((kQuoteBottom - kQuoteTop) - total) / 2;
+    if (top < kQuoteTop) top = kQuoteTop;
 
-    int y = top + kLineHeight;  // step to the first baseline
+    // The accent bar spans the quotation only, not the attribution.
+    uiDrawAccentBar(kMargin, top, 4, bodyHeight);
 
+    int y = top + uiAscender(Font::Large);
     for (const String &line : lines) {
-        uiDrawText(textX, y, line.c_str(), ink::kTextBlack);
-        y += kLineHeight;
+        uiDrawText(Font::Large, kTextX, y, line.c_str(), ink::kTextBlack);
+        y += kQuoteLead;
     }
 
-    y += kLineHeight / 2;
-    String byline = "- " + (sQuote.author.length() ? sQuote.author : String("Unknown"));
-    uiDrawText(textX, y, byline.c_str(), ink::kTextDark);
+    y = top + bodyHeight + authorGap + uiAscender(Font::BodyBold);
+    String author = sQuote.author.length() ? sQuote.author : String("Unknown");
+    uiDrawText(Font::BodyBold, kTextX, y,
+               uiEllipsize(Font::BodyBold, author, kColumnWidth).c_str(),
+               ink::kTextBlack);
 
-    if (sQuote.source.length()) {
-        y += kLineHeight;
-        uiDrawText(textX, y, sQuote.source.c_str(), ink::kTextMid);
+    y += (authorHeight - uiAscender(Font::BodyBold)) + sourceGap + uiAscender(Font::Small);
+    for (const String &line : sourceLines) {
+        uiDrawText(Font::Small, kTextX, y, line.c_str(), ink::kTextMid);
+        y += uiLineHeight(Font::Small);
     }
 }
 
-static void drawFooter() {
-    uiDrawRule(kMargin, kFooterRuleY, EPD_WIDTH - 2 * kMargin, ink::kLight);
+static void drawStatusFooter() {
+    uiDrawRule(kMargin, 858, kContentRight - kMargin, ink::kLight);
 
-    // Battery block first, right aligned: icon then percentage. Its left edge
-    // is what bounds the status text, which contains an arbitrary SSID.
-    const int iconW = 59;  // body + terminal nub
-    String label = sBattery.present ? String(sBattery.percent) + "%  " +
-                                          String(sBattery.volts, 2) + "V"
-                                    : String("USB");
+    // The battery sits at the right of the footer block and the status lines
+    // run down the left, so the two cannot collide however long the SSID is.
+    const int iconW = 44;
+    const int iconX = kContentRight - iconW;
+    uiDrawBattery(iconX, 886, sBattery.present ? sBattery.percent : -1);
 
-    int labelW = uiTextWidth(label.c_str());
-    int iconX = EPD_WIDTH - kMargin - labelW - 12 - iconW;
+    String label = sBattery.present ? String(sBattery.percent) + "%" : String("USB");
+    const int labelW = uiTextWidth(Font::SmallBold, label.c_str());
+    uiDrawTextRight(Font::SmallBold, iconX - 12, 902, label.c_str(), ink::kTextDark);
 
-    uiDrawBattery(iconX, 484, sBattery.present ? sBattery.percent : -1);
-    uiDrawTextRight(EPD_WIDTH - kMargin, 505, label.c_str(), ink::kTextDark);
+    const int statusWidth = (iconX - 12 - labelW - 20) - kMargin;
 
-    String status = "Wi-Fi: " + wifiDescription();
-    status += "   SD: " + storageDescription();
-    status += "   BLE: " + String(bleActive() ? "on" : "off");
-
-    const int statusLimit = iconX - 24;
-    drawChecked(kMargin, 505, statusLimit,
-                uiEllipsize(status, statusLimit - kMargin).c_str(), ink::kTextMid);
+    uiDrawText(Font::Small, kMargin, 894,
+               uiEllipsize(Font::Small, "Wi-Fi: " + wifiDescription(), statusWidth).c_str(),
+               ink::kTextMid);
+    uiDrawText(Font::Small, kMargin, 920,
+               uiEllipsize(Font::Small, "SD: " + storageDescription(), statusWidth).c_str(),
+               ink::kTextMid);
+    uiDrawText(Font::Small, kMargin, 946,
+               (String("BLE: ") + (bleActive() ? "on" : "off")).c_str(), ink::kTextMid);
 }
 
 static void renderQuoteScreen() {
     uiClearBuffer();
-    drawHeader();
+
+    uiDrawText(Font::SmallBold, kMargin, 52, "QUOTE OF THE DAY", ink::kTextMid);
+    uiDrawTextRight(Font::Small, kContentRight, 52,
+                    uiEllipsize(Font::Small, todayLong(), 260).c_str(), ink::kTextMid);
+    uiDrawRule(kMargin, 74, kContentRight - kMargin, ink::kLight);
+
     drawQuote();
-    drawFooter();
+    drawStatusFooter();
     uiFlush();
 }
 
 // --- Setup screen -----------------------------------------------------------
 
-// Two columns: instructions on the left, the join QR on the right.
-//
-// The vertical budget is tight - only one font is available and its line box is
-// 51 px - so every baseline below is placed explicitly rather than accumulated
-// from wrapped text. Wrapping here previously pushed the second option past the
-// footer rule and straight through the footer text.
+// One column, top to bottom: title, QR, the two routes, then device details.
+// Portrait gives enough height that nothing has to share a row.
 static void renderSetupScreen() {
     uiClearBuffer();
 
-    uiDrawText(kMargin, 58, "SET UP WI-FI", ink::kTextMid);
-    uiDrawTextRight(EPD_WIDTH - kMargin, 58, "Quote of the Day", ink::kTextMid);
-    uiDrawRule(kMargin, kHeaderRuleY, EPD_WIDTH - 2 * kMargin, ink::kMid);
+    uiDrawText(Font::Title, kMargin, 68, "Set up Wi-Fi", ink::kTextBlack);
+    uiDrawText(Font::Small, kMargin, 100, "Quote of the Day", ink::kTextMid);
+    uiDrawRule(kMargin, 120, kContentRight - kMargin, ink::kLight);
 
-    // The setup screen needs two footer lines (device details, then the hint or
-    // an error), so its rule sits higher than the quote screen's.
-    const int setupRuleY = 420;
-
-    // --- Right column: QR, vertically centred in the body region ---
-    const int qrScale = 5;
+    // --- QR, centred. 6 px per module scans comfortably at arm's length ---
+    const int qrScale = 6;
     const int qrSide = uiQrSize(portalQrPayload().c_str(), qrScale);
-    const int qrX = EPD_WIDTH - kMargin - qrSide;
-    const int qrY = (kHeaderRuleY + setupRuleY) / 2 - qrSide / 2;
+    uiDrawQr((UI_WIDTH - qrSide) / 2, 154, portalQrPayload().c_str(), qrScale);
 
-    uiDrawQr(qrX, qrY, portalQrPayload().c_str(), qrScale);
+    // --- The two routes ---
+    struct Option {
+        int         titleY;
+        const char *title;
+        const char *lines[2];
+    };
+    static const Option kOptions[] = {
+        {478, "With a phone",    {"Scan the code to connect.", nullptr}},
+        {580, "With a computer", {"Open improv-wifi.com", "in Chrome or Edge."}},
+    };
 
-    // --- Left column ---
-    const int textX = kMargin + kGutter;
-    const int textRight = qrX - 30;  // keep clear of the QR's quiet zone
+    for (const Option &opt : kOptions) {
+        int y = opt.titleY;
+        uiDrawText(Font::BodyBold, kTextX, y, opt.title, ink::kTextBlack);
 
-    // Baselines are explicit, and every gap is at least kLineHeight (58) so
-    // that consecutive 51 px line boxes cannot touch. Only ~29 characters fit
-    // in this column at the one available font size, so the copy stays terse
-    // rather than wrapping into the space below.
-    const int phoneTitleY = 145;
-    const int phoneBodyY  = 203;
-    const int compTitleY  = 280;
-    const int compBodyY1  = 338;
-    const int compBodyY2  = 396;
+        for (const char *line : opt.lines) {
+            if (!line) break;
+            y += 36;
+            uiDrawText(Font::Body, kTextX, y, line, ink::kTextDark);
+        }
 
-    uiDrawAccentBar(kMargin, phoneTitleY - kAscender, 6,
-                    (phoneBodyY + kDescender) - (phoneTitleY - kAscender));
-    drawChecked(textX, phoneTitleY, textRight, "With a phone", ink::kTextBlack);
-    drawChecked(textX, phoneBodyY, textRight,
-                "Scan the code to connect.", ink::kTextDark);
+        const int barTop = opt.titleY - uiAscender(Font::BodyBold);
+        const int barBottom = y + uiDescender(Font::Body);
+        uiDrawAccentBar(kMargin, barTop, 4, barBottom - barTop);
+    }
 
-    uiDrawAccentBar(kMargin, compTitleY - kAscender, 6,
-                    (compBodyY2 + kDescender) - (compTitleY - kAscender));
-    drawChecked(textX, compTitleY, textRight, "With a computer", ink::kTextBlack);
-    drawChecked(textX, compBodyY1, textRight, "Open improv-wifi.com", ink::kTextDark);
-    drawChecked(textX, compBodyY2, textRight, "in Chrome or Edge.", ink::kTextDark);
+    // --- Details and hint ---
+    uiDrawRule(kMargin, 790, kContentRight - kMargin, ink::kLight);
 
-    // --- Footer: two lines, both full width ---
-    uiDrawRule(kMargin, setupRuleY, EPD_WIDTH - 2 * kMargin, ink::kLight);
+    const int valueX = kMargin + 96;
+    uiDrawText(Font::SmallBold, kMargin, 822, "Network", ink::kTextMid);
+    uiDrawText(Font::Small, valueX, 822,
+               uiEllipsize(Font::Small, portalSsid(), kContentRight - valueX).c_str(),
+               ink::kTextBlack);
 
-    // Network name and key for anyone who cannot scan. Full width here, which
-    // is why it is not beside the QR - there it ran off the screen edge.
-    String details = "Network: " + portalSsid() + "   Key: " + portalPassword();
-    drawChecked(kMargin, 462, EPD_WIDTH - kMargin,
-                uiEllipsize(details, EPD_WIDTH - 2 * kMargin).c_str(),
-                ink::kTextMid);
+    uiDrawText(Font::SmallBold, kMargin, 850, "Key", ink::kTextMid);
+    uiDrawText(Font::Small, valueX, 850, portalPassword().c_str(), ink::kTextBlack);
 
-    String footer = sSetupError.length()
-                        ? sSetupError
-                        : String("Hold the button 3 s to start over.");
-    drawChecked(kMargin, 520, EPD_WIDTH - kMargin,
-                uiEllipsize(footer, EPD_WIDTH - 2 * kMargin).c_str(),
-                sSetupError.length() ? ink::kTextBlack : ink::kTextMid);
+    if (sSetupError.length()) {
+        int y = 902;
+        for (const String &line :
+             uiWrapText(Font::Small, sSetupError, kContentRight - kMargin)) {
+            if (y > 950) break;
+            uiDrawText(Font::Small, kMargin, y, line.c_str(), ink::kTextBlack);
+            y += uiLineHeight(Font::Small);
+        }
+    } else {
+        uiDrawText(Font::Small, kMargin, 912, "Hold the button 3 s to start over.",
+                   ink::kTextMid);
+    }
 
     uiFlush();
 }
 
 static void renderMessage(const char *title, const char *detail) {
-    const int x = kMargin + kGutter;
-    const int limit = EPD_WIDTH - kMargin;
-
     uiClearBuffer();
-    uiDrawAccentBar(kMargin, 240 - kAscender, 6, kLineHeight + kAscender + kDescender);
-    drawChecked(x, 240, limit, uiEllipsize(title, limit - x).c_str(), ink::kTextBlack);
+
+    int y = UI_HEIGHT / 2 - 40;
+    const int barTop = y - uiAscender(Font::Title);
+
+    uiDrawText(Font::Title, kTextX, y,
+               uiEllipsize(Font::Title, title, kColumnWidth).c_str(), ink::kTextBlack);
+
+    int barBottom = y + uiDescender(Font::Title);
     if (detail) {
-        drawChecked(x, 240 + kLineHeight, limit,
-                    uiEllipsize(detail, limit - x).c_str(), ink::kTextDark);
+        for (const String &line : uiWrapText(Font::Body, detail, kColumnWidth)) {
+            y += 44;
+            uiDrawText(Font::Body, kTextX, y, line.c_str(), ink::kTextDark);
+            barBottom = y + uiDescender(Font::Body);
+        }
     }
+    uiDrawAccentBar(kMargin, barTop, 4, barBottom - barTop);
+
     uiFlush();
 }
 
@@ -289,7 +282,7 @@ static void enterSetupMode() {
 // Improv connects inline and reports the outcome through its own protocol.
 // Unlike the portal this is safe: the USB link is unaffected by retuning Wi-Fi.
 static bool onImprovCredentials(const String &ssid, const String &password) {
-    renderMessage("Connecting...", ssid.c_str());
+    renderMessage("Connecting", ssid.c_str());
 
     portalStop();
     if (!wifiConnect(ssid, password)) {
@@ -306,7 +299,7 @@ static bool onImprovCredentials(const String &ssid, const String &password) {
 static void applyPendingCredentials() {
     sPendingCredentials = false;
 
-    renderMessage("Connecting...", sPendingSsid.c_str());
+    renderMessage("Connecting", sPendingSsid.c_str());
     portalStop();
 
     if (!wifiConnect(sPendingSsid, sPendingPassword)) {
@@ -326,7 +319,7 @@ static void onLongPress(Button2 &btn) {
     Serial.println("[button] long press - clearing Wi-Fi credentials");
 
     settingsClear();
-    renderMessage("Wi-Fi forgotten.", "Restarting for setup...");
+    renderMessage("Wi-Fi forgotten", "Restarting for setup...");
     delay(1500);
     ESP.restart();
 }

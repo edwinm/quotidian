@@ -1,9 +1,9 @@
 # Firmware — LilyGo T5 4.7" e-paper (ESP32-S3)
 
-A minimal example sketch for the 960×540 e-paper board: it renders a quote in
-anti-aliased grayscale type, reads its content from the microSD card, syncs the
-date over Wi-Fi, advertises the battery level over BLE, and shows a status
-footer.
+A minimal example sketch for the 960×540 e-paper board, run in **portrait**:
+it renders a quote in anti-aliased grayscale type, reads its content from the
+microSD card, syncs the date over Wi-Fi, advertises the battery level over BLE,
+and shows a status footer.
 
 This targets the **non-touch** board revision — no touch controller is
 initialised or required.
@@ -74,7 +74,8 @@ Improv has no channel for timezone data, so devices provisioned over USB keep
 
 | Feature | Where | Notes |
 | --- | --- | --- |
-| Grayscale + anti-aliased text | [src/ui.cpp](src/ui.cpp) | Renders into a 4-bit PSRAM framebuffer |
+| Grayscale + anti-aliased text | [src/ui.cpp](src/ui.cpp) | Own glyph blitter, rotated into portrait |
+| Font generation | [tools/fontconvert.py](tools/fontconvert.py) | TrueType → 4-bit coverage bitmaps |
 | Improv Serial provisioning | [src/improv.cpp](src/improv.cpp) | Full protocol, shares the log port |
 | Captive portal + QR | [src/portal.cpp](src/portal.cpp) | SoftAP, DNS wildcard, browser timezone |
 | Credential storage | [src/settings.cpp](src/settings.cpp) | NVS via `Preferences` |
@@ -82,6 +83,36 @@ Improv has no channel for timezone data, so devices provisioned over USB keep
 | Battery indicator | [src/battery.cpp](src/battery.cpp) | ADC + eFuse Vref calibration |
 | Wi-Fi + NTP | [src/wireless.cpp](src/wireless.cpp) | Station mode, timezone-aware |
 | BLE | [src/wireless.cpp](src/wireless.cpp) | Standard Battery Service (0x180F) |
+
+### Portrait orientation
+
+Drawing happens in a **540×960 portrait canvas** that is rotated a quarter turn
+counter-clockwise on its way to the landscape framebuffer. `ui.cpp` maps every
+logical point with `px = ly, py = 539 - lx`.
+
+If the picture is upside down for the way the device stands, flip
+`UI_ROTATE_CCW` in [src/ui.cpp](src/ui.cpp) — it is a single `constexpr bool`.
+
+Rotation is why `ui.cpp` draws glyphs itself instead of calling the display
+library's `write_mode()`: that renderer only writes horizontally, into a buffer
+whose stride is hard-coded to `EPD_WIDTH`. The blitter here walks each glyph's
+4-bit coverage bitmap and places pixels through the rotating mapper, which keeps
+the anti-aliasing intact. Rectangles take a shortcut — a rotated rectangle is
+still a rectangle, so those map once and let the driver fill.
+
+### Fonts
+
+The display library ships one font. [tools/fontconvert.py](tools/fontconvert.py)
+generates the rest from any TrueType file:
+
+```bash
+python3 tools/fontconvert.py FontBody 26 ~/Library/Fonts/Roboto-Regular.ttf \
+    -o src/fonts/font_body.h
+```
+
+Six are checked in (Roboto regular and bold at 18, 26 and 36 px), covering ASCII
+and Latin-1. Bitmaps are **uncompressed** on purpose — the rotating blitter reads
+them directly and would otherwise need zlib. That costs about 154 kB of flash.
 
 ### Grayscale and anti-aliasing
 
@@ -99,9 +130,8 @@ Two colour scales are in play, which is easy to trip over: shapes take 8-bit
 values (`0x00`–`0xFF`), text takes 4-bit values (`0`–`15`). Both are named in
 `ink::` in [src/ui.h](src/ui.h).
 
-The bundled font covers ASCII and Latin-1 only (plus box-drawing and emoji
-blocks). Accented characters like `é` work; typographic quotes like `“` do not
-and render as `?`.
+The generated fonts cover ASCII and Latin-1. Accented characters like `é` work;
+typographic quotes like `“` do not, and fall back to `?`.
 
 ### Battery — the ADC2 caveat
 
