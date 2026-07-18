@@ -29,6 +29,51 @@ file per calendar day for the SD card, and the display shows a quote whose
 author was born or died on today's date. See
 [firmware/README.md](firmware/README.md).
 
+## Getting started
+
+You need the LilyGo T5 4.7" e-paper board (ESP32-S3, non-touch), a microSD card,
+[Node.js](https://nodejs.org) and [PlatformIO](https://platformio.org).
+
+**1. Prepare the SD card.** It must be **FAT32** — the ESP32's SD library cannot
+read exFAT, which is how cards larger than 32 GB usually ship. On macOS, find
+the disk and erase it:
+
+```bash
+diskutil list                                    # find your card, e.g. /dev/disk4
+diskutil eraseDisk FAT32 QOTD MBRFormat /dev/disk4
+```
+
+Check the size in `diskutil list` before erasing — the command destroys
+everything on the disk it is given, and getting the identifier wrong means
+erasing something else.
+
+**2. Copy the quotes onto it.**
+
+```bash
+npm install
+npm run export:device                  # 366 day files, ~7.8 MB
+cp -r data/device/quotes /Volumes/QOTD/
+```
+
+`data/quotes-by-day.json` is already in the repo, so there is no need to re-run
+the Wikidata/Wikiquote fetch unless you want fresher data.
+
+**3. Build and flash.** Insert the card in the board, connect USB:
+
+```bash
+pio run -t upload -t monitor
+```
+
+**4. Connect it to Wi-Fi.** The display boots into setup mode and shows you how:
+scan the QR code with a phone, or open
+[improv-wifi.com/demo](https://www.improv-wifi.com/demo/) in Chrome while it is
+plugged in. Nothing needs to be edited in the source, and the credentials are
+stored on the device rather than in the repo.
+
+The clock syncs over NTP, and the display then shows a quote by someone born or
+died on today's date. To move it to another network later, hold the front button
+for three seconds.
+
 ## Data sources
 
 Two sources are combined:

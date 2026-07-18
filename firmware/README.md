@@ -217,12 +217,18 @@ with a custom partition table (single app slot, no OTA, ~13 MB FFat). The SD
 card was kept because the dataset can then be refreshed by swapping a card
 instead of reflashing.
 
-Copy the export to the card root as `/quotes/`:
+The card must be formatted **FAT32**. The Arduino SD library does not support
+exFAT, which is the default on cards above 32 GB — such a card mounts as "no
+card" with no further explanation. Copy the export to the card root as
+`/quotes/`:
 
 ```bash
 npm run export:device
 cp -r data/device/quotes /Volumes/YOUR_CARD/
 ```
+
+Without the dataset the device still runs: it logs `/quotes/MM-DD.tsv not found`
+and falls back to `/quote.txt`, then to a built-in quote.
 
 The format is tab-separated, one quote per line, in the field order
 `text, author, datesPrefix, datesBold, datesSuffix, attribution`. It is not
