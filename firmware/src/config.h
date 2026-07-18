@@ -42,5 +42,34 @@
 // the quote, line 2 the author, line 3 (optional) the dates.
 #define QUOTE_FILE "/quote.txt"
 
-// Full-screen redraws are slow and wear the panel, so keep this generous.
-#define REFRESH_INTERVAL_MS (10UL * 60UL * 1000UL)
+// ---------------------------------------------------------------------------
+// Sleep schedule
+// ---------------------------------------------------------------------------
+
+// Local time of the nightly update. A margin past midnight costs nothing and
+// absorbs both clock drift and the hour that a DST change shifts the alarm by;
+// waking before midnight would otherwise mean rendering yesterday again.
+//
+// The margin is belt-and-braces, though: correctness comes from reading the
+// clock after waking, never from trusting the moment we woke up.
+#define WAKE_HOUR   0
+#define WAKE_MINUTE 10
+
+// How often to correct the hardware clock over Wi-Fi. The PCF8563 drifts a few
+// seconds a day, so a week is already far tighter than a date display needs -
+// and a sync costs roughly 0.3 mAh against a daily budget of about 9 mAh.
+// Timezone and DST are handled locally and need no network.
+#define NTP_SYNC_INTERVAL_DAYS 7
+
+// When the clock is unknown there is no calendar day to wake up for, so the
+// device retries on this interval instead of guessing at a nightly schedule.
+#define SLEEP_RETRY_MINUTES 15
+
+// Setup mode has to stay awake to serve the portal, which is ruinous on
+// battery. If nobody completes provisioning within this window, sleep and try
+// again at the next alarm. The button wakes it straight back into setup.
+#define SETUP_TIMEOUT_MS (15UL * 60UL * 1000UL)
+
+// After a button wake, stay up this long so a long press can still reach the
+// Wi-Fi reset before the device drops back to sleep.
+#define BUTTON_AWAKE_MS 30000UL

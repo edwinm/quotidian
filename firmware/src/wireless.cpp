@@ -8,13 +8,12 @@
 #include <time.h>
 
 #include "config.h"
+#include "rtc.h"
 #include "settings.h"
 
 // ---------------------------------------------------------------------------
 // Wi-Fi
 // ---------------------------------------------------------------------------
-
-static bool sTimeSynced = false;
 
 bool wifiBegin() {
     return wifiConnect(settingsSsid(), settingsPassword());
@@ -48,8 +47,12 @@ bool wifiConnect(const String &ssid, const String &password) {
     configTzTime(settingsTimezone().c_str(), NTP_SERVER);
     struct tm timeinfo;
     // getLocalTime() polls until the clock leaves 1970.
-    sTimeSynced = getLocalTime(&timeinfo, 10000);
-    Serial.printf("[ntp] %s\n", sTimeSynced ? "clock synced" : "sync failed");
+    bool ok = getLocalTime(&timeinfo, 10000);
+    Serial.printf("[ntp] %s\n", ok ? "clock synced" : "sync failed");
+
+    // Push the fresh time into the hardware clock, which is what carries it
+    // through deep sleep and across power loss.
+    if (ok) rtcStoreSystemClock();
 
     return true;
 }
@@ -68,13 +71,18 @@ String wifiDescription() {
     return wifiConnected() ? WiFi.SSID() : String("offline");
 }
 
+// The clock is valid whether it came from NTP this boot or from the PCF8563 on
+// wake, so this asks the clock itself rather than tracking how it was set.
 bool timeSynced() {
-    return sTimeSynced;
+    time_t now = time(nullptr);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    return (lt.tm_year + 1900) >= 2024;
 }
 
 String todayLong() {
     struct tm timeinfo;
-    if (!sTimeSynced || !getLocalTime(&timeinfo, 0)) {
+    if (!timeSynced() || !getLocalTime(&timeinfo, 0)) {
         return String(__DATE__);
     }
 
@@ -89,7 +97,7 @@ String todayLong() {
 
 bool todayParts(int *year, int *month, int *day) {
     struct tm timeinfo;
-    if (!sTimeSynced || !getLocalTime(&timeinfo, 0)) return false;
+    if (!timeSynced() || !getLocalTime(&timeinfo, 0)) return false;
 
     *year  = timeinfo.tm_year + 1900;
     *month = timeinfo.tm_mon + 1;

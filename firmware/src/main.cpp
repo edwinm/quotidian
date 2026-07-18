@@ -16,11 +16,14 @@
 
 #include <Arduino.h>
 #include <Button2.h>
+#include <esp_sleep.h>
 
 #include "battery.h"
 #include "config.h"
 #include "improv.h"
+#include "power.h"
 #include "portal.h"
+#include "rtc.h"
 #include "settings.h"
 #include "storage.h"
 #include "ui.h"
@@ -271,7 +274,7 @@ static void renderMessage(const char *title, const char *detail) {
 // --- Content ----------------------------------------------------------------
 
 // Today's quote comes from the day file matching the calendar date, so the
-// author's birth or death day is always today. Without a synced clock the day
+// author's birth or death day is always today. Without a valid clock the day
 // is genuinely unknown, and picking one would be a guess - so the built-in
 // quote is used instead.
 static void loadQuote() {
@@ -287,25 +290,122 @@ static void loadQuote() {
     Serial.println("[content] using built-in fallback quote");
 }
 
-// --- Mode transitions -------------------------------------------------------
+// --- Sleep scheduling -------------------------------------------------------
 
-static void enterRunningMode() {
-    sMode = MODE_RUNNING;
-    sSetupError = "";
+// Survives deep sleep in RTC memory, which costs no flash wear. Lost on power
+// removal, where the worst case is one extra NTP sync.
+RTC_DATA_ATTR static int  sDaysSinceSync = 9999;   // force a sync on first boot
+RTC_DATA_ATTR static char sLastRendered[12] = "";
 
-    // Only now is the clock synced, so only now can today's quote be chosen.
-    loadQuote();
-
-    improvSetProvisioned(true);
-    if (!bleActive()) bleBegin();
-    bleSetBatteryLevel(sBattery.percent);
-
-    renderQuoteScreen();
-    sNextRefresh = millis() + REFRESH_INTERVAL_MS;
+static String todayKey() {
+    int y, m, d;
+    if (!todayParts(&y, &m, &d)) return String("");
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d", y, m, d);
+    return String(buf);
 }
+
+// Seconds from now until the next local WAKE_HOUR:WAKE_MINUTE.
+static long secondsUntilNextWake() {
+    time_t now = time(nullptr);
+    struct tm lt;
+    localtime_r(&now, &lt);
+
+    struct tm target = lt;
+    target.tm_hour = WAKE_HOUR;
+    target.tm_min  = WAKE_MINUTE;
+    target.tm_sec  = 0;
+
+    time_t at = mktime(&target);
+    if (at <= now) at += 24 * 60 * 60;
+    return (long)(at - now);
+}
+
+// Arms both wake sources, then sleeps.
+//
+// The PCF8563 alarm is the accurate one and normally fires first. The ESP32's
+// own timer is set an hour later purely as a backstop: its RC oscillator is
+// minutes-per-day inaccurate, so it is no good for scheduling, but it does
+// guarantee the device still wakes if the alarm never arrives.
+[[noreturn]] static void sleepUntilNextWake() {
+    // With no valid clock there is no calendar day to aim at. Retry soon rather
+    // than arming a nightly schedule against a time we do not have - the first
+    // version armed nothing at all in this case and slept straight through.
+    if (!timeSynced()) {
+        long retry = SLEEP_RETRY_MINUTES * 60L;
+        Serial.printf("[power] clock unknown, retrying in %ld s\n", retry);
+        esp_sleep_enable_timer_wakeup((uint64_t)retry * 1000000ULL);
+        powerDeepSleep();
+    }
+
+    long seconds = secondsUntilNextWake();
+
+    time_t at = time(nullptr) + seconds;
+    struct tm utc;
+    gmtime_r(&at, &utc);
+    rtcSetDailyAlarmUtc(utc.tm_hour, utc.tm_min);
+    rtcLogAlarmState();
+
+    // Backstop only: the ESP32's own timer is minutes-per-day inaccurate, so it
+    // is set well after the alarm and exists purely so a failed alarm cannot
+    // strand the device.
+    esp_sleep_enable_timer_wakeup((uint64_t)(seconds + 3600) * 1000000ULL);
+    Serial.printf("[power] next update in %ld s (%.1f h)\n", seconds, seconds / 3600.0);
+
+    powerDeepSleep();
+}
+
+// Woke before the date rolled over - too early, or the alarm shifted an hour
+// across a DST change. Nothing to draw yet; come back at the real target.
+[[noreturn]] static void sleepUntilDateRolls() {
+    long seconds = secondsUntilNextWake();
+    Serial.printf("[power] woke early, date has not rolled - back to sleep for %ld s\n",
+                  seconds);
+
+    esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+    powerDeepSleep();
+}
+
+// --- The nightly update -----------------------------------------------------
+
+static void runDailyUpdate() {
+    // Correct the hardware clock only when it is due, or when it holds nothing
+    // usable. Wi-Fi is the single most expensive thing this device does.
+    bool needSync = !timeSynced() || sDaysSinceSync >= NTP_SYNC_INTERVAL_DAYS;
+
+    if (needSync) {
+        Serial.printf("[power] NTP sync due (%d days since last)\n", sDaysSinceSync);
+        if (wifiBegin() && timeSynced()) {
+            sDaysSinceSync = 0;
+        }
+        wifiStop();  // hands ADC2 back and drops the radio
+    } else {
+        sDaysSinceSync++;
+    }
+
+    if (!timeSynced()) {
+        // No clock at all: render the fallback rather than a wrong day.
+        Serial.println("[power] no valid clock, showing fallback");
+    }
+
+    storageBegin();
+    loadQuote();
+    renderQuoteScreen();
+
+    String key = todayKey();
+    if (key.length()) snprintf(sLastRendered, sizeof(sLastRendered), "%s", key.c_str());
+}
+
+// --- Mode transitions -------------------------------------------------------
 
 static void enterSetupMode() {
     sMode = MODE_SETUP;
+
+    // BLE only runs here. A device that sleeps 24 hours a day cannot advertise
+    // meaningfully, and the radio is far too expensive to hold up for it - so
+    // the Battery Service is available while provisioning and not otherwise.
+    if (!bleActive()) bleBegin();
+    bleSetBatteryLevel(sBattery.percent);
 
     improvSetProvisioned(false);
     portalBegin([](const String &ssid, const String &password,
@@ -332,7 +432,7 @@ static bool onImprovCredentials(const String &ssid, const String &password) {
     }
 
     settingsSaveCredentials(ssid, password);
-    enterRunningMode();
+    sMode = MODE_RUNNING;
     return true;
 }
 
@@ -349,10 +449,8 @@ static void applyPendingCredentials() {
     }
 
     settingsSaveCredentials(sPendingSsid, sPendingPassword);
-    enterRunningMode();
+    sMode = MODE_RUNNING;
 }
-
-// --- Button -----------------------------------------------------------------
 
 static void onLongPress(Button2 &btn) {
     (void)btn;
@@ -364,15 +462,49 @@ static void onLongPress(Button2 &btn) {
     ESP.restart();
 }
 
+// --- Setup mode -------------------------------------------------------------
+
+// Provisioning needs the device awake and serving, which no battery enjoys.
+// It runs as a bounded window rather than a state the device can be left in.
+[[noreturn]] static void runSetupMode() {
+    enterSetupMode();
+
+    uint32_t deadline = millis() + SETUP_TIMEOUT_MS;
+    while (millis() < deadline) {
+        sButton.loop();
+        improvLoop();
+        portalLoop();
+
+        if (sPendingCredentials) {
+            applyPendingCredentials();
+            deadline = millis() + SETUP_TIMEOUT_MS;  // on failure, another go
+        }
+
+        // Either route may have succeeded; both land here.
+        if (sMode == MODE_RUNNING) {
+            portalStop();
+            runDailyUpdate();
+            sleepUntilNextWake();
+        }
+        delay(5);
+    }
+
+    Serial.println("[power] setup timed out, sleeping");
+    portalStop();
+    renderMessage("Setup paused", "Press the button to try again.");
+    sleepUntilNextWake();
+}
+
 // --- Lifecycle --------------------------------------------------------------
 
 void setup() {
     Serial.begin(115200);
     delay(200);
-    Serial.println("\n[boot] Quote of the Day");
+
+    WakeCause cause = powerWakeCause();
+    Serial.printf("\n[boot] Quote of the Day - woke by %s\n", powerWakeCauseName(cause));
 
     if (!uiBegin()) {
-        // Without a framebuffer there is nothing to show; halt loudly.
         while (true) {
             Serial.println("[boot] halted: no framebuffer");
             delay(5000);
@@ -380,10 +512,17 @@ void setup() {
     }
 
     settingsBegin();
+
+    // The hardware clock carries the time across sleep and power loss, so the
+    // system clock and timezone come from it before anything else needs a date.
+    rtcBegin();
+    rtcApplyToSystemClock();
+    rtcClearAlarm();  // release INT, or the next sleep returns immediately
+
     batteryBegin();
 
-    // Sample the battery while the radios are still off - the sense pin is on
-    // ADC2, which Wi-Fi takes over once it starts.
+    // Sample while the radios are off - the sense pin is on ADC2, which Wi-Fi
+    // takes over once it starts.
     sBattery = batteryRead();
     Serial.printf("[battery] %.2f V (%d%%)%s\n", sBattery.volts, sBattery.percent,
                   sBattery.present ? "" : " - no battery, running off USB");
@@ -392,46 +531,35 @@ void setup() {
     sButton.setLongClickTime(RESET_HOLD_MS);
     sButton.setLongClickDetectedHandler(onLongPress);
 
-    storageBegin();
     improvBegin(onImprovCredentials);
 
-    if (settingsHasCredentials() && wifiBegin()) {
-        enterRunningMode();
-    } else {
-        if (settingsHasCredentials()) {
-            sSetupError = "Could not reach " + settingsSsid() + ".";
+    if (!settingsHasCredentials()) {
+        runSetupMode();  // does not return
+    }
+
+    // An alarm that fires before the date has rolled would redraw yesterday.
+    // The guard is on the clock, not on the wake instant.
+    if (cause == WAKE_RTC_ALARM && todayKey() == String(sLastRendered) &&
+        String(sLastRendered).length()) {
+        sleepUntilDateRolls();
+    }
+
+    sMode = MODE_RUNNING;
+    runDailyUpdate();
+
+    // A button press means someone is standing there; stay up briefly so a long
+    // press can still reach the Wi-Fi reset.
+    if (cause == WAKE_BUTTON) {
+        Serial.println("[power] button wake, staying up briefly");
+        uint32_t until = millis() + BUTTON_AWAKE_MS;
+        while (millis() < until) {
+            sButton.loop();
+            delay(10);
         }
-        enterSetupMode();
     }
+
+    sleepUntilNextWake();
 }
 
-void loop() {
-    sButton.loop();
-    improvLoop();
-
-    if (sMode == MODE_SETUP) {
-        portalLoop();
-        if (sPendingCredentials) applyPendingCredentials();
-        return;
-    }
-
-    if ((int32_t)(millis() - sNextRefresh) < 0) {
-        delay(10);
-        return;
-    }
-
-    // Re-reading the battery means dropping Wi-Fi for the duration, because
-    // ADC2 and the radio cannot both be active.
-    bool wasConnected = wifiConnected();
-    if (wasConnected) wifiStop();
-
-    sBattery = batteryRead();
-    bleSetBatteryLevel(sBattery.percent);
-
-    if (wasConnected) wifiBegin();
-
-    if (storageMounted()) loadQuote();
-
-    renderQuoteScreen();
-    sNextRefresh = millis() + REFRESH_INTERVAL_MS;
-}
+// Never runs: setup() always ends in deep sleep.
+void loop() {}
