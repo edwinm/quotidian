@@ -70,8 +70,8 @@ static String sSetupError;
 
 // --- Quote screen -----------------------------------------------------------
 
-static constexpr int kQuoteTop    = 120;
-static constexpr int kQuoteBottom = 820;
+static constexpr int kQuoteTop    = 140;
+static constexpr int kQuoteBottom = 800;
 static constexpr int kQuoteLead   = 46;  // leading for Font::Large (42 px box)
 
 static void drawQuote() {
@@ -86,10 +86,8 @@ static void drawQuote() {
     const bool hasDates = sQuote.datesBold.length() || sQuote.datesPrefix.length() ||
                           sQuote.datesSuffix.length();
     const int datesHeight = hasDates ? sourceGap + uiLineHeight(Font::Small) : 0;
-    const int attribHeight =
-        sQuote.attribution.length() ? 10 + uiLineHeight(Font::Small) : 0;
 
-    const int total = bodyHeight + authorGap + authorHeight + datesHeight + attribHeight;
+    const int total = bodyHeight + authorGap + authorHeight + datesHeight;
 
     int top = kQuoteTop + ((kQuoteBottom - kQuoteTop) - total) / 2;
     if (top < kQuoteTop) top = kQuoteTop;
@@ -130,52 +128,43 @@ static void drawQuote() {
 
         y += uiLineHeight(Font::Small);
     }
+}
 
-    // Attribution. The corpus is CC BY-SA, which requires crediting the source
-    // and naming the licence wherever the quote is shown.
+// The foot of the page carries the credit the licence requires, and nothing
+// else - no Wi-Fi, SD or Bluetooth status. This is a thing to read, not a
+// dashboard, and it is going in a picture frame.
+//
+// The battery appears only once it is nearly flat, so it reads as a warning
+// rather than as decoration.
+static void drawFooter() {
+    const int baseline = 910;
+
     if (sQuote.attribution.length()) {
-        y += 10 + uiAscender(Font::Small);
-        uiDrawText(Font::Small, kTextX, y,
+        uiDrawText(Font::Small, kMargin, baseline,
                    uiEllipsize(Font::Small, sQuote.attribution, kColumnWidth).c_str(),
                    ink::kTextLight);
     }
-}
 
-static void drawStatusFooter() {
-    uiDrawRule(kMargin, 858, kContentRight - kMargin, ink::kLight);
+    if (!sBattery.present || sBattery.percent > LOW_BATTERY_PERCENT) return;
 
-    // The battery sits at the right of the footer block and the status lines
-    // run down the left, so the two cannot collide however long the SSID is.
     const int iconW = 44;
     const int iconX = kContentRight - iconW;
-    uiDrawBattery(iconX, 886, sBattery.present ? sBattery.percent : -1);
+    uiDrawBattery(iconX, baseline - 15, sBattery.percent);
 
-    String label = sBattery.present ? String(sBattery.percent) + "%" : String("USB");
-    const int labelW = uiTextWidth(Font::SmallBold, label.c_str());
-    uiDrawTextRight(Font::SmallBold, iconX - 12, 902, label.c_str(), ink::kTextDark);
-
-    const int statusWidth = (iconX - 12 - labelW - 20) - kMargin;
-
-    uiDrawText(Font::Small, kMargin, 894,
-               uiEllipsize(Font::Small, "Wi-Fi: " + wifiDescription(), statusWidth).c_str(),
-               ink::kTextMid);
-    uiDrawText(Font::Small, kMargin, 920,
-               uiEllipsize(Font::Small, "SD: " + storageDescription(), statusWidth).c_str(),
-               ink::kTextMid);
-    uiDrawText(Font::Small, kMargin, 946,
-               (String("BLE: ") + (bleActive() ? "on" : "off")).c_str(), ink::kTextMid);
+    String label = String(sBattery.percent) + "%";
+    uiDrawTextRight(Font::SmallBold, iconX - 10, baseline, label.c_str(), ink::kTextBlack);
 }
 
 static void renderQuoteScreen() {
     uiClearBuffer();
 
-    uiDrawText(Font::SmallBold, kMargin, 52, "QUOTE OF THE DAY", ink::kTextMid);
-    uiDrawTextRight(Font::Small, kContentRight, 52,
+    uiDrawText(Font::SmallBold, kMargin, 64, "QUOTE OF THE DAY", ink::kTextMid);
+    uiDrawTextRight(Font::Small, kContentRight, 64,
                     uiEllipsize(Font::Small, todayLong(), 260).c_str(), ink::kTextMid);
-    uiDrawRule(kMargin, 74, kContentRight - kMargin, ink::kLight);
+    uiDrawRule(kMargin, 86, kContentRight - kMargin, ink::kLight);
 
     drawQuote();
-    drawStatusFooter();
+    drawFooter();
     uiFlush();
 }
 

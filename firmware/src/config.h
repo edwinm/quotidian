@@ -42,6 +42,11 @@
 // the quote, line 2 the author, line 3 (optional) the dates.
 #define QUOTE_FILE "/quote.txt"
 
+// The battery indicator stays hidden until the charge drops to this level. On
+// something meant to be looked at rather than monitored, a permanent gauge is
+// noise; a warning is information.
+#define LOW_BATTERY_PERCENT 10
+
 // ---------------------------------------------------------------------------
 // Sleep schedule
 // ---------------------------------------------------------------------------
