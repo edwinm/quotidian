@@ -1,0 +1,93 @@
+# Quote of the Day
+
+A data pipeline that builds a per-day dataset of quotes by writers, poets and
+philosophers, keyed to each author's **birth or death date**. A screen device can
+show one quote each day, with the matching date rendered bold — so the quote
+doubles as a date indicator.
+
+Example (11 February):
+
+> I think, therefore I am
+> — René Descartes
+>
+> 31 March 1596 – **11 February 1650**
+
+## Data sources
+
+Two sources are combined:
+
+- **[Wikidata](https://query.wikidata.org)** (SPARQL) — the people and their birth/
+  death dates. We select occupations philosopher, poet, writer, playwright,
+  novelist, essayist, with both dates known, and an English Wikiquote page.
+- **[Wikiquote](https://en.wikiquote.org)** (English) — the quotes themselves.
+
+Both are licensed **CC BY-SA 4.0**; every stored quote records this, so
+attribution is always available (`license`, `licenseUrl`, `attributionRequired`).
+
+## Only quotes that are certain
+
+The extraction is deliberately strict — uncertain quotes are dropped, not shown:
+
+- Only quotes in **trusted sections**. Sections named *Misattributed*, *Disputed*,
+  *Attributed*, *Unsourced*, *"Quotes about…"*, and meta sections are skipped. A
+  blocked top-level section stays blocked even if it has innocuous subheadings
+  (this is what prevented a Newton quote leaking onto Descartes' page).
+- Every quote must have a **source citation** in the wikitext. No citation → dropped.
+- Sources that read *"Attributed to…"* are rejected.
+- Editorial insertions (`[like this]`) are rejected.
+- **English-only**: a stopword heuristic drops non-English quotes.
+- Citations are cleaned to readable text (`{{cite book|…}}` templates parsed);
+  anything still messy is dropped. Thin citations (`p. 12`) are enriched with the
+  work title from the section heading.
+
+## Pipeline
+
+```bash
+npm run fetch:people   # Wikidata  -> data/people.json
+npm run fetch:quotes   # Wikiquote -> data/quotes-raw.json
+npm run build          # bucket by day -> data/quotes-by-day.json + coverage report
+npm run all            # all three in order
+```
+
+All steps retry on transient API errors / rate-limiting. If `fetch:quotes` prints
+a `WARNING: N batch(es) failed`, the data is incomplete — just re-run it.
+
+### Preview a day
+
+```bash
+node src/pick.js              # today
+node src/pick.js 2026-02-11   # a specific date
+```
+
+## Output: `data/quotes-by-day.json`
+
+An object keyed by `"MM-DD"` (all 366 days incl. 29 Feb). Each entry:
+
+```json
+{
+  "text": "…the quote…",
+  "author": "René Descartes",
+  "birthDisplay": "31 March 1596",
+  "deathDisplay": "11 February 1650",
+  "matched": "death",                 // which date is "today" → render bold
+  "source": "…citation…",
+  "sourceUrl": "https://en.wikiquote.org/wiki/René_Descartes",
+  "license": "CC BY-SA 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "attributionRequired": true
+}
+```
+
+A person appears on **both** their birth day and death day (if both are known),
+giving two chances to place them on the calendar.
+
+### Rotation
+
+If a day has several quotes they rotate per year (`index = year % count`), so the
+device shows a different quote each year but a stable one within a day.
+
+## Coverage
+
+Every one of the 366 calendar days has quotes (currently 22–212 per day, ~41k
+quote-instances total). `data/coverage-report.json` lists any empty or thin days —
+if a future run produces gaps, that's where they'll show.
