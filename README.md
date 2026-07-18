@@ -39,8 +39,8 @@ read exFAT, which is how cards larger than 32 GB usually ship. On macOS, find
 the disk and erase it:
 
 ```bash
-diskutil list                                    # find your card, e.g. /dev/disk4
-diskutil eraseDisk FAT32 QOTD MBRFormat /dev/disk4
+diskutil list                                      # find your card, e.g. /dev/disk10
+diskutil eraseDisk FAT32 QUOTES MBRFormat /dev/disk10
 ```
 
 Check the size in `diskutil list` before erasing — the command destroys
@@ -52,8 +52,13 @@ erasing something else.
 ```bash
 npm install
 npm run export:device                  # 366 day files, ~7.8 MB
-cp -r data/device/quotes /Volumes/QOTD/
+COPYFILE_DISABLE=1 cp -r data/device/quotes /Volumes/QUOTES/
 ```
+
+`COPYFILE_DISABLE=1` matters on macOS: without it, Finder and `cp` write an
+`._name` resource fork beside every file on a FAT volume, doubling the file
+count. The device ignores them, but they are pure clutter. If you already
+copied without it, `find /Volumes/QUOTES -name "._*" -delete` cleans up.
 
 `data/quotes-by-day.json` is already in the repo, so there is no need to re-run
 the Wikidata/Wikiquote fetch unless you want fresher data.

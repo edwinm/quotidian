@@ -224,8 +224,12 @@ card" with no further explanation. Copy the export to the card root as
 
 ```bash
 npm run export:device
-cp -r data/device/quotes /Volumes/YOUR_CARD/
+COPYFILE_DISABLE=1 cp -r data/device/quotes /Volumes/YOUR_CARD/
 ```
+
+On macOS, `COPYFILE_DISABLE=1` stops `cp` writing an `._name` resource fork
+next to every file on a FAT volume. Harmless to the device, but it doubles the
+file count on the card.
 
 Without the dataset the device still runs: it logs `/quotes/MM-DD.tsv not found`
 and falls back to `/quote.txt`, then to a built-in quote.
