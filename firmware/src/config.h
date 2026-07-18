@@ -46,6 +46,34 @@
 // Sleep schedule
 // ---------------------------------------------------------------------------
 
+// Development switch.
+//
+//   1 - normal: wake nightly, draw, deep sleep. Weeks of battery life, but USB
+//       disappears with the chip, so reflashing needs a button press first.
+//   0 - stay awake after the update. USB stays enumerated, so you can reflash
+//       whenever you like. Costs roughly 100 mA - fine on USB, hopeless on a
+//       battery.
+//
+// Set back to 1 before running on battery. Every build prints a reminder while
+// this is 0.
+#define DEEP_SLEEP_ENABLED 0
+
+#if !DEEP_SLEEP_ENABLED
+#pragma message("*** DEEP_SLEEP_ENABLED = 0 - development mode, device will NOT sleep ***")
+#endif
+
+// Shortens the wake cycle to this many seconds so the sleep and wake path can
+// be exercised without waiting for midnight. 0 uses the real nightly schedule.
+//
+// Keep it short in both directions: the backstop timer is what recovers the
+// board if the alarm fails, and a long one locks you out of USB until it
+// expires. That happened during development with a 62-minute backstop.
+#define TEST_WAKE_SECONDS 0
+
+#if TEST_WAKE_SECONDS
+#pragma message("*** TEST_WAKE_SECONDS set - short wake cycle, not the nightly schedule ***")
+#endif
+
 // Local time of the nightly update. A margin past midnight costs nothing and
 // absorbs both clock drift and the hour that a DST change shifts the alarm by;
 // waking before midnight would otherwise mean rendering yesterday again.

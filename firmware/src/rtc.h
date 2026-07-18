@@ -41,3 +41,4 @@ void rtcLogAlarmState();
 // Clears a pending alarm flag, releasing INT back to high. Must be called
 // after waking, or the pin stays low and the next sleep returns immediately.
 void rtcClearAlarm();
+

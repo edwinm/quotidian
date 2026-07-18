@@ -5,6 +5,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <WiFi.h>
+#include <esp_sntp.h>
 #include <time.h>
 
 #include "config.h"
@@ -14,6 +15,15 @@
 // ---------------------------------------------------------------------------
 // Wi-Fi
 // ---------------------------------------------------------------------------
+
+// Set from the SNTP callback, which is the only reliable signal that the time
+// actually came from the network rather than from the hardware clock.
+static volatile bool sNtpUpdated = false;
+
+static void onNtpSync(struct timeval *tv) {
+    (void)tv;
+    sNtpUpdated = true;
+}
 
 bool wifiBegin() {
     return wifiConnect(settingsSsid(), settingsPassword());
@@ -44,15 +54,33 @@ bool wifiConnect(const String &ssid, const String &password) {
 
     Serial.printf("[wifi] connected, IP %s\n", WiFi.localIP().toString().c_str());
 
+    // getLocalTime() is no good here: it returns true the moment the clock looks
+    // plausible, and the hardware clock has already made it plausible. It would
+    // report success without SNTP having answered, and the stale time would then
+    // be written straight back into the chip - which is exactly what stopped the
+    // wake alarm from firing at the right moment.
+    sNtpUpdated = false;
+    sntp_set_time_sync_notification_cb(onNtpSync);
     configTzTime(settingsTimezone().c_str(), NTP_SERVER);
-    struct tm timeinfo;
-    // getLocalTime() polls until the clock leaves 1970.
-    bool ok = getLocalTime(&timeinfo, 10000);
-    Serial.printf("[ntp] %s\n", ok ? "clock synced" : "sync failed");
 
-    // Push the fresh time into the hardware clock, which is what carries it
-    // through deep sleep and across power loss.
-    if (ok) rtcStoreSystemClock();
+    uint32_t ntpDeadline = millis() + 15000;
+    while (!sNtpUpdated && (int32_t)(millis() - ntpDeadline) < 0) {
+        delay(50);
+    }
+
+    if (!sNtpUpdated) {
+        Serial.println("[ntp] no response, keeping the hardware clock as-is");
+        return true;
+    }
+
+    struct tm now;
+    getLocalTime(&now, 0);
+    Serial.printf("[ntp] synced: %04d-%02d-%02d %02d:%02d:%02d local\n",
+                  now.tm_year + 1900, now.tm_mon + 1, now.tm_mday,
+                  now.tm_hour, now.tm_min, now.tm_sec);
+
+    // Only now is it worth carrying into the hardware clock.
+    rtcStoreSystemClock();
 
     return true;
 }

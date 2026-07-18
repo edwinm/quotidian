@@ -61,8 +61,7 @@ static void parkSdCardPins() {
 static void shutdownRadios() {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
-    esp_wifi_stop();
-    esp_wifi_deinit();
+    esp_wifi_stop();  // deinit() here just logs an error; stop is what matters
 
     // Harmless when BLE was never started.
     esp_bt_controller_disable();

@@ -307,6 +307,8 @@ static String todayKey() {
 
 // Seconds from now until the next local WAKE_HOUR:WAKE_MINUTE.
 static long secondsUntilNextWake() {
+    if (TEST_WAKE_SECONDS) return TEST_WAKE_SECONDS;
+
     time_t now = time(nullptr);
     struct tm lt;
     localtime_r(&now, &lt);
@@ -327,18 +329,36 @@ static long secondsUntilNextWake() {
 // own timer is set an hour later purely as a backstop: its RC oscillator is
 // minutes-per-day inaccurate, so it is no good for scheduling, but it does
 // guarantee the device still wakes if the alarm never arrives.
-[[noreturn]] static void sleepUntilNextWake() {
+// True once the cycle has finished and the device is deliberately staying up,
+// which only happens with DEEP_SLEEP_ENABLED == 0.
+static bool sStayingAwake = false;
+
+// Ends a wake cycle. Sleeps normally; in development mode it returns instead,
+// leaving USB enumerated so the board can be reflashed without a button press.
+static bool endCycleAwake(long seconds) {
+    if (DEEP_SLEEP_ENABLED) return false;
+
+    Serial.printf("[power] DEEP SLEEP DISABLED - staying awake "
+                  "(would have slept %ld s). Short-press the button to redraw.\n",
+                  seconds);
+    sStayingAwake = true;
+    return true;
+}
+
+static void sleepUntilNextWake() {
     // With no valid clock there is no calendar day to aim at. Retry soon rather
     // than arming a nightly schedule against a time we do not have - the first
     // version armed nothing at all in this case and slept straight through.
     if (!timeSynced()) {
         long retry = SLEEP_RETRY_MINUTES * 60L;
+        if (endCycleAwake(retry)) return;
         Serial.printf("[power] clock unknown, retrying in %ld s\n", retry);
         esp_sleep_enable_timer_wakeup((uint64_t)retry * 1000000ULL);
         powerDeepSleep();
     }
 
     long seconds = secondsUntilNextWake();
+    if (endCycleAwake(seconds)) return;
 
     time_t at = time(nullptr) + seconds;
     struct tm utc;
@@ -349,7 +369,10 @@ static long secondsUntilNextWake() {
     // Backstop only: the ESP32's own timer is minutes-per-day inaccurate, so it
     // is set well after the alarm and exists purely so a failed alarm cannot
     // strand the device.
-    esp_sleep_enable_timer_wakeup((uint64_t)(seconds + 3600) * 1000000ULL);
+    // The backstop sits well after the alarm so the alarm normally wins, but
+    // close enough that a failed alarm does not strand the board for an hour.
+    long backstop = TEST_WAKE_SECONDS ? seconds + 120 : seconds + 3600;
+    esp_sleep_enable_timer_wakeup((uint64_t)backstop * 1000000ULL);
     Serial.printf("[power] next update in %ld s (%.1f h)\n", seconds, seconds / 3600.0);
 
     powerDeepSleep();
@@ -357,8 +380,10 @@ static long secondsUntilNextWake() {
 
 // Woke before the date rolled over - too early, or the alarm shifted an hour
 // across a DST change. Nothing to draw yet; come back at the real target.
-[[noreturn]] static void sleepUntilDateRolls() {
+static void sleepUntilDateRolls() {
     long seconds = secondsUntilNextWake();
+    if (endCycleAwake(seconds)) return;
+
     Serial.printf("[power] woke early, date has not rolled - back to sleep for %ld s\n",
                   seconds);
 
@@ -452,6 +477,12 @@ static void applyPendingCredentials() {
     sMode = MODE_RUNNING;
 }
 
+static void onShortPress(Button2 &btn) {
+    (void)btn;
+    Serial.println("[button] short press - redrawing");
+    runDailyUpdate();
+}
+
 static void onLongPress(Button2 &btn) {
     (void)btn;
     Serial.println("[button] long press - clearing Wi-Fi credentials");
@@ -466,11 +497,13 @@ static void onLongPress(Button2 &btn) {
 
 // Provisioning needs the device awake and serving, which no battery enjoys.
 // It runs as a bounded window rather than a state the device can be left in.
-[[noreturn]] static void runSetupMode() {
+static void runSetupMode() {
     enterSetupMode();
 
+    // In development mode the window never closes; there is nothing useful to
+    // sleep for, and recursing to restart the loop would eventually eat stack.
     uint32_t deadline = millis() + SETUP_TIMEOUT_MS;
-    while (millis() < deadline) {
+    while (!DEEP_SLEEP_ENABLED || (int32_t)(millis() - deadline) < 0) {
         sButton.loop();
         improvLoop();
         portalLoop();
@@ -530,18 +563,23 @@ void setup() {
     sButton.begin(BUTTON_1);
     sButton.setLongClickTime(RESET_HOLD_MS);
     sButton.setLongClickDetectedHandler(onLongPress);
+    sButton.setClickHandler(onShortPress);
 
     improvBegin(onImprovCredentials);
 
     if (!settingsHasCredentials()) {
-        runSetupMode();  // does not return
+        runSetupMode();
+        return;  // sleeps, or falls through to loop() in development mode
     }
 
     // An alarm that fires before the date has rolled would redraw yesterday.
     // The guard is on the clock, not on the wake instant.
-    if (cause == WAKE_RTC_ALARM && todayKey() == String(sLastRendered) &&
-        String(sLastRendered).length()) {
+    // The short test cycle deliberately skips this: on a 3-minute loop the date
+    // never rolls, and the guard would suppress every render.
+    if (!TEST_WAKE_SECONDS && cause == WAKE_RTC_ALARM &&
+        todayKey() == String(sLastRendered) && String(sLastRendered).length()) {
         sleepUntilDateRolls();
+        return;  // sleeps, or falls through to loop() in development mode
     }
 
     sMode = MODE_RUNNING;
@@ -561,5 +599,29 @@ void setup() {
     sleepUntilNextWake();
 }
 
-// Never runs: setup() always ends in deep sleep.
-void loop() {}
+// Only runs with DEEP_SLEEP_ENABLED == 0. In normal operation setup() ends in
+// deep sleep and this is never reached.
+void loop() {
+    if (!sStayingAwake) {
+        delay(100);
+        return;
+    }
+
+    sButton.loop();
+    improvLoop();
+    if (sMode == MODE_SETUP) portalLoop();
+
+    // Still honour the calendar: redraw when the day actually rolls over, so
+    // development mode behaves like the real thing, just without sleeping.
+    static uint32_t nextDayCheck = 0;
+    if ((int32_t)(millis() - nextDayCheck) >= 0) {
+        nextDayCheck = millis() + 60000;
+        String key = todayKey();
+        if (key.length() && key != String(sLastRendered)) {
+            Serial.println("[power] date rolled over, redrawing");
+            runDailyUpdate();
+        }
+    }
+
+    delay(10);
+}
