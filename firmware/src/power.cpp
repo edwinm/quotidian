@@ -6,6 +6,7 @@
 #include <driver/rtc_io.h>
 #include <esp_bt.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
 #include <esp_wifi.h>
 
 #include "epd_driver.h"
@@ -16,13 +17,26 @@ static constexpr gpio_num_t kRtcIntPin = GPIO_NUM_9;
 static constexpr gpio_num_t kButtonPin = (gpio_num_t)BUTTON_1;
 
 WakeCause powerWakeCause() {
-    switch (esp_sleep_get_wakeup_cause()) {
-        case ESP_SLEEP_WAKEUP_EXT1: {
-            uint64_t mask = esp_sleep_get_ext1_wakeup_status();
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    uint64_t mask = esp_sleep_get_ext1_wakeup_status();
+
+    // Raw values, because "power-on" is what this returns for anything it does
+    // not recognise - including a timer wake - and that ambiguity hid which
+    // source was actually firing.
+    // esp_reset_reason() is the one that says whether this was a wake at all:
+    // 8 = DEEPSLEEP, 1 = POWERON, 9 = BROWNOUT, 4 = PANIC, 3 = SW.
+    Serial.printf("[power] reset reason=%d, wakeup cause=%d, ext1 mask=0x%llX "
+                  "(RTC INT bit=%d, button bit=%d)\n",
+                  (int)esp_reset_reason(), (int)cause, mask,
+                  (int)((mask >> kRtcIntPin) & 1), (int)((mask >> kButtonPin) & 1));
+
+    switch (cause) {
+        case ESP_SLEEP_WAKEUP_EXT1:
             if (mask & (1ULL << kRtcIntPin)) return WAKE_RTC_ALARM;
             if (mask & (1ULL << kButtonPin)) return WAKE_BUTTON;
             return WAKE_POWER_ON;
-        }
+        case ESP_SLEEP_WAKEUP_TIMER:
+            return WAKE_TIMER;
         default:
             return WAKE_POWER_ON;
     }
@@ -32,6 +46,7 @@ const char *powerWakeCauseName(WakeCause cause) {
     switch (cause) {
         case WAKE_RTC_ALARM: return "RTC alarm";
         case WAKE_BUTTON:    return "button";
+        case WAKE_TIMER:     return "backstop timer";
         default:             return "power-on";
     }
 }

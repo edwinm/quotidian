@@ -61,7 +61,7 @@
 //
 // Set back to 1 before running on battery. Every build prints a reminder while
 // this is 0.
-#define DEEP_SLEEP_ENABLED 0
+#define DEEP_SLEEP_ENABLED 1
 
 #if !DEEP_SLEEP_ENABLED
 #pragma message("*** DEEP_SLEEP_ENABLED = 0 - development mode, device will NOT sleep ***")

@@ -12,6 +12,8 @@ static const char *kKeySsid   = "ssid";
 static const char *kKeyPass   = "pass";
 static const char *kKeyTz     = "tz";
 static const char *kKeyTzName = "tzname";
+static const char *kKeySyncDays = "syncdays";
+static const char *kKeyLastDay  = "lastday";
 
 void settingsBegin() {
     sPrefs.begin(kNamespace, false);
@@ -51,6 +53,23 @@ void settingsSaveTimezone(const String &posix, const String &ianaName) {
     sPrefs.putString(kKeyTz, posix);
     sPrefs.putString(kKeyTzName, ianaName);
     Serial.printf("[settings] saved timezone %s (%s)\n", ianaName.c_str(), posix.c_str());
+}
+
+int settingsDaysSinceSync() {
+    // Large default so the first boot after a flash always syncs.
+    return sPrefs.getInt(kKeySyncDays, 9999);
+}
+
+void settingsSetDaysSinceSync(int days) {
+    sPrefs.putInt(kKeySyncDays, days);
+}
+
+String settingsLastRendered() {
+    return sPrefs.getString(kKeyLastDay, "");
+}
+
+void settingsSetLastRendered(const String &day) {
+    sPrefs.putString(kKeyLastDay, day);
 }
 
 void settingsClear() {

@@ -68,6 +68,11 @@ static String sPendingPassword;
 // Populated when a connection attempt fails, so the setup screen can say why.
 static String sSetupError;
 
+// Why this cycle started. Recorded at boot and reported again just before
+// sleeping: the boot line itself is usually lost while USB CDC enumerates, and
+// this is the one fact that says whether the RTC alarm is doing its job.
+static WakeCause sWakeCause = WAKE_POWER_ON;
+
 // --- Quote screen -----------------------------------------------------------
 
 static constexpr int kQuoteTop    = 140;
@@ -281,10 +286,9 @@ static void loadQuote() {
 
 // --- Sleep scheduling -------------------------------------------------------
 
-// Survives deep sleep in RTC memory, which costs no flash wear. Lost on power
-// removal, where the worst case is one extra NTP sync.
-RTC_DATA_ATTR static int  sDaysSinceSync = 9999;   // force a sync on first boot
-RTC_DATA_ATTR static char sLastRendered[12] = "";
+// Both of these used to live in RTC memory, which was wrong: the RTC alarm
+// power-cycles this board rather than waking it from deep sleep, so RTC memory
+// does not survive. They are in NVS now - see settings.h.
 
 static String todayKey() {
     int y, m, d;
@@ -362,7 +366,8 @@ static void sleepUntilNextWake() {
     // close enough that a failed alarm does not strand the board for an hour.
     long backstop = TEST_WAKE_SECONDS ? seconds + 120 : seconds + 3600;
     esp_sleep_enable_timer_wakeup((uint64_t)backstop * 1000000ULL);
-    Serial.printf("[power] next update in %ld s (%.1f h)\n", seconds, seconds / 3600.0);
+    Serial.printf("[power] this cycle woke by %s; next update in %ld s (%.1f h)\n",
+                  powerWakeCauseName(sWakeCause), seconds, seconds / 3600.0);
 
     powerDeepSleep();
 }
@@ -385,16 +390,18 @@ static void sleepUntilDateRolls() {
 static void runDailyUpdate() {
     // Correct the hardware clock only when it is due, or when it holds nothing
     // usable. Wi-Fi is the single most expensive thing this device does.
-    bool needSync = !timeSynced() || sDaysSinceSync >= NTP_SYNC_INTERVAL_DAYS;
+    const int daysSinceSync = settingsDaysSinceSync();
+    bool needSync = !timeSynced() || daysSinceSync >= NTP_SYNC_INTERVAL_DAYS;
 
     if (needSync) {
-        Serial.printf("[power] NTP sync due (%d days since last)\n", sDaysSinceSync);
+        Serial.printf("[power] NTP sync due (%d days since last)\n", daysSinceSync);
         if (wifiBegin() && timeSynced()) {
-            sDaysSinceSync = 0;
+            settingsSetDaysSinceSync(0);
         }
         wifiStop();  // hands ADC2 back and drops the radio
     } else {
-        sDaysSinceSync++;
+        settingsSetDaysSinceSync(daysSinceSync + 1);
+        Serial.printf("[power] clock from RTC, %d days since NTP\n", daysSinceSync + 1);
     }
 
     if (!timeSynced()) {
@@ -407,7 +414,7 @@ static void runDailyUpdate() {
     renderQuoteScreen();
 
     String key = todayKey();
-    if (key.length()) snprintf(sLastRendered, sizeof(sLastRendered), "%s", key.c_str());
+    if (key.length()) settingsSetLastRendered(key);
 }
 
 // --- Mode transitions -------------------------------------------------------
@@ -524,6 +531,7 @@ void setup() {
     delay(200);
 
     WakeCause cause = powerWakeCause();
+    sWakeCause = cause;
     Serial.printf("\n[boot] Quote of the Day - woke by %s\n", powerWakeCauseName(cause));
 
     if (!uiBegin()) {
@@ -565,8 +573,8 @@ void setup() {
     // The guard is on the clock, not on the wake instant.
     // The short test cycle deliberately skips this: on a 3-minute loop the date
     // never rolls, and the guard would suppress every render.
-    if (!TEST_WAKE_SECONDS && cause == WAKE_RTC_ALARM &&
-        todayKey() == String(sLastRendered) && String(sLastRendered).length()) {
+    String lastRendered = settingsLastRendered();
+    if (!TEST_WAKE_SECONDS && lastRendered.length() && todayKey() == lastRendered) {
         sleepUntilDateRolls();
         return;  // sleeps, or falls through to loop() in development mode
     }
@@ -606,7 +614,7 @@ void loop() {
     if ((int32_t)(millis() - nextDayCheck) >= 0) {
         nextDayCheck = millis() + 60000;
         String key = todayKey();
-        if (key.length() && key != String(sLastRendered)) {
+        if (key.length() && key != settingsLastRendered()) {
             Serial.println("[power] date rolled over, redrawing");
             runDailyUpdate();
         }

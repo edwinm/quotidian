@@ -6,6 +6,7 @@ enum WakeCause {
     WAKE_POWER_ON,   // cold boot or reset
     WAKE_RTC_ALARM,  // PCF8563 INT went low - the nightly update
     WAKE_BUTTON,     // front button
+    WAKE_TIMER,      // the backstop fired, meaning the alarm did not
 };
 
 WakeCause powerWakeCause();
