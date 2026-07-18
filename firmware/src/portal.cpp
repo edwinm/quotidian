@@ -270,7 +270,24 @@ String portalPassword() {
     return sApPassword;
 }
 
+// In the Wi-Fi QR format these characters carry meaning and must be escaped
+// inside a field value.
+static String escapeQrValue(const String &in) {
+    String out;
+    out.reserve(in.length());
+    for (size_t i = 0; i < in.length(); i++) {
+        char c = in[i];
+        if (c == '\\' || c == ';' || c == ',' || c == ':' || c == '"') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
 String portalQrPayload() {
-    // Standard Wi-Fi network QR format.
-    return "WIFI:S=" + sApSsid + ";T=WPA;P=" + sApPassword + ";;";
+    // Standard Wi-Fi network QR format. Fields are separated by COLONS -
+    // "WIFI:T:WPA;S:name;P:key;;". Using '=' instead produces a code that scans
+    // perfectly and then reports "no usable data", because the payload is not
+    // recognised as network credentials.
+    return "WIFI:T:WPA;S:" + escapeQrValue(sApSsid) +
+           ";P:" + escapeQrValue(sApPassword) + ";;";
 }

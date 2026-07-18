@@ -15,8 +15,9 @@ static constexpr bool UI_ROTATE_CCW = true;
 
 static uint8_t *sFramebuffer = nullptr;
 
-// Version 4 (33x33 modules) holds 78 bytes at ECC_LOW - ample for a Wi-Fi join
-// payload, which runs to roughly 45 characters.
+// Version 4 (33x33 modules) holds 62 bytes at ECC_MEDIUM, against a Wi-Fi join
+// payload of roughly 45. Medium rather than low correction because this is
+// scanned off a physical panel, where ghosting and glare cost you modules.
 static constexpr uint8_t kQrVersion = 4;
 static constexpr uint8_t kQrQuietZone = 4;  // modules, mandated by the spec
 
@@ -325,7 +326,7 @@ int uiDrawQr(int x, int y, const char *text, int scale) {
     QRCode qrcode;
     uint8_t data[qrcode_getBufferSize(kQrVersion)];
 
-    if (qrcode_initText(&qrcode, data, kQrVersion, ECC_LOW, text) < 0) {
+    if (qrcode_initText(&qrcode, data, kQrVersion, ECC_MEDIUM, text) < 0) {
         Serial.println("[ui] QR payload too long");
         return 0;
     }
@@ -346,3 +347,4 @@ int uiDrawQr(int x, int y, const char *text, int scale) {
 
     return side;
 }
+
