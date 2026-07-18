@@ -120,6 +120,27 @@ not actually distinguish the two, and the footer will report 100% either way.
 Telling them apart properly needs the charger's status line rather than a
 voltage threshold.
 
+### Verifying layout without looking at the screen
+
+There is only one font, its line box is 51 px tall, and text width is easy to
+underestimate — roughly **19 px per character**, not the ~14 you might guess.
+Overflows are invisible from the build machine.
+
+So text goes through `drawChecked()`, which measures before drawing and logs
+any string that would leave its box:
+
+```
+[layout] OVERFLOW right: x=110 w=657 end=767 limit=685 "Scan the code and follow the page."
+```
+
+Watch the serial monitor after a redraw; a clean boot prints no `[layout]`
+lines. Anything containing user data — SSIDs especially — should additionally
+go through `uiEllipsize()`, since no SSID length can be relied on.
+
+This caught both bugs in the first setup-screen layout: the left column ran
+past the footer rule and through the footer text, and the network name and key
+overran the right screen edge.
+
 ### Captive portal — why it does not connect inline
 
 Submitting the form saves the credentials and answers immediately; the

@@ -96,6 +96,16 @@ std::vector<String> uiWrapText(const String &text, int maxWidth) {
     return lines;
 }
 
+String uiEllipsize(const String &text, int maxWidth) {
+    if (uiTextWidth(text.c_str()) <= maxWidth) return text;
+
+    String out = text;
+    while (out.length() > 1 && uiTextWidth((out + "...").c_str()) > maxWidth) {
+        out.remove(out.length() - 1);
+    }
+    return out + "...";
+}
+
 void uiDrawRule(int x, int y, int width, uint8_t color) {
     epd_draw_hline(x, y, width, color, sFramebuffer);
 }

@@ -52,6 +52,10 @@ void uiDrawTextRight(int xRight, int y, const char *text, uint8_t textColor);
 // Greedy word wrap. Splits on spaces only, so long unbroken tokens may overrun.
 std::vector<String> uiWrapText(const String &text, int maxWidth);
 
+// Shortens `text` with a trailing ellipsis until it fits `maxWidth`. Use for
+// anything containing user data - SSIDs have no length limit worth trusting.
+String uiEllipsize(const String &text, int maxWidth);
+
 // Battery pictogram with a grayscale fill proportional to `percent`.
 // `percent` < 0 draws an empty body with a dash, meaning "no battery".
 void uiDrawBattery(int x, int y, int percent);
