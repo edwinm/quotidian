@@ -1,6 +1,13 @@
 #include "ui.h"
 
+#include <qrcode.h>
+
 #include "firasans.h"
+
+// Version 4 (33x33 modules) holds 78 bytes at ECC_LOW - ample for a Wi-Fi
+// join payload, which runs to roughly 45 characters.
+static constexpr uint8_t kQrVersion = 4;
+static constexpr uint8_t kQrQuietZone = 4;  // modules, mandated by the spec
 
 static uint8_t *sFramebuffer = nullptr;
 
@@ -101,6 +108,38 @@ void uiDrawAccentBar(int x, int y, int width, int height) {
         uint8_t shade = (uint8_t)(ink::kDark + t * (ink::kLight - ink::kDark));
         epd_draw_hline(x, y + i, width, shade, sFramebuffer);
     }
+}
+
+int uiQrSize(const char *text, int scale) {
+    (void)text;  // module count follows from the version alone
+    int modules = 4 * kQrVersion + 17;
+    return (modules + 2 * kQrQuietZone) * scale;
+}
+
+int uiDrawQr(int x, int y, const char *text, int scale) {
+    QRCode qrcode;
+    uint8_t data[qrcode_getBufferSize(kQrVersion)];
+
+    if (qrcode_initText(&qrcode, data, kQrVersion, ECC_LOW, text) < 0) {
+        Serial.println("[ui] QR payload too long");
+        return 0;
+    }
+
+    int side = (qrcode.size + 2 * kQrQuietZone) * scale;
+
+    // The quiet zone must be paper-white or scanners struggle to lock on.
+    epd_fill_rect(x, y, side, side, ink::kPaper, sFramebuffer);
+
+    int origin = kQrQuietZone * scale;
+    for (uint8_t my = 0; my < qrcode.size; my++) {
+        for (uint8_t mx = 0; mx < qrcode.size; mx++) {
+            if (!qrcode_getModule(&qrcode, mx, my)) continue;
+            epd_fill_rect(x + origin + mx * scale, y + origin + my * scale,
+                          scale, scale, ink::kBlack, sFramebuffer);
+        }
+    }
+
+    return side;
 }
 
 void uiDrawBattery(int x, int y, int percent) {

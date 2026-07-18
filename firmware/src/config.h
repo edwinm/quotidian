@@ -1,28 +1,33 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// Wi-Fi. Leave the SSID empty to skip networking entirely; the sketch then
-// falls back to the build date instead of NTP time.
+// Wi-Fi credentials are NOT configured here. They are provisioned at runtime -
+// over USB with Improv, or through the captive portal - and stored in NVS.
+// See firmware/README.md.
 // ---------------------------------------------------------------------------
-#define WIFI_SSID     ""
-#define WIFI_PASSWORD ""
 
 // How long to wait for an association before giving up (ms).
 #define WIFI_TIMEOUT_MS 15000
+
+// Hold the front button this long to erase credentials and return to setup.
+#define RESET_HOLD_MS 3000
 
 // ---------------------------------------------------------------------------
 // Time
 // ---------------------------------------------------------------------------
 #define NTP_SERVER "pool.ntp.org"
 
-// POSIX TZ string. This one is Europe/Amsterdam incl. DST rules.
-#define TIMEZONE "CET-1CEST,M3.5.0,M10.5.0/3"
+// Used until provisioning supplies the real one. The captive portal derives an
+// exact POSIX TZ from the browser; Improv has no channel for it, so devices set
+// up over USB keep this default until the portal is used.
+#define DEFAULT_TIMEZONE "CET-1CEST,M3.5.0,M10.5.0/3"
 
 // ---------------------------------------------------------------------------
-// Bluetooth Low Energy. The device advertises under this name and exposes the
-// standard Battery Service (0x180F), so any BLE scanner app can read the
-// charge level.
+// Identity
 // ---------------------------------------------------------------------------
+#define FIRMWARE_VERSION "1.0.0"
+
+// Advertised over BLE, and reported to Improv clients.
 #define BLE_DEVICE_NAME "Quote of the Day"
 
 // ---------------------------------------------------------------------------

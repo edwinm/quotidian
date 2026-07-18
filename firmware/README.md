@@ -21,21 +21,63 @@ The e-paper driver library is pulled from GitHub automatically; nothing needs
 to be vendored. `platformio.ini` points `src_dir` and `boards_dir` back into
 this directory — if you move either, update those two paths.
 
-Before flashing, set your network in [src/config.h](src/config.h):
+There is nothing to configure before flashing. Wi-Fi credentials are entered on
+the device at first boot (see below) and stored in NVS, so they never touch
+source control.
 
-```c
-#define WIFI_SSID     "your-network"
-#define WIFI_PASSWORD "your-password"
-```
+## Wi-Fi setup
 
-Leaving `WIFI_SSID` empty is fine — the sketch then stays offline and falls back
-to the build date instead of NTP.
+With no credentials stored, the display boots into setup mode and puts the
+instructions on screen. Two routes are offered, because no single one covers
+every device:
+
+**With a phone** — scan the QR code on the screen. It is a standard Wi-Fi join
+payload, so iOS and Android cameras recognise it natively and connect to the
+device's own access point; the captive portal then opens by itself. Pick your
+network, type its password, done.
+
+**With a computer** — connect USB and open
+[improv-wifi.com/demo](https://www.improv-wifi.com/demo/) in Chrome or Edge.
+This uses [Improv Serial](https://www.improv-wifi.com/serial/) over Web Serial:
+no app, no network switching.
+
+The phone route exists because Safari supports neither Web Serial nor Web
+Bluetooth, and Apple requires every iOS browser to use WebKit — so on an
+iPhone, a captive portal is the only app-free option.
+
+### Changing networks
+
+**Hold the front button for 3 seconds.** Credentials are erased and the device
+restarts into setup mode. Same procedure if you move house or change router.
+
+If stored credentials stop working, the device falls back to setup mode on its
+own and the screen says which network it could not reach.
+
+### Security note
+
+The setup access point is WPA2 protected with a random password, regenerated on
+every boot. You never type it — it is embedded in the QR code. This matters:
+on an open access point, your home Wi-Fi password would cross the air
+unencrypted while you submit the form.
+
+### Timezone
+
+You are never asked for one. The captive portal derives an exact POSIX TZ string
+from the browser, including this year's DST transition rules, by probing
+`Date.getTimezoneOffset()` across the year — that avoids shipping a 470-zone
+lookup table.
+
+Improv has no channel for timezone data, so devices provisioned over USB keep
+`DEFAULT_TIMEZONE` from [src/config.h](src/config.h) until the portal is used.
 
 ## What each part demonstrates
 
 | Feature | Where | Notes |
 | --- | --- | --- |
 | Grayscale + anti-aliased text | [src/ui.cpp](src/ui.cpp) | Renders into a 4-bit PSRAM framebuffer |
+| Improv Serial provisioning | [src/improv.cpp](src/improv.cpp) | Full protocol, shares the log port |
+| Captive portal + QR | [src/portal.cpp](src/portal.cpp) | SoftAP, DNS wildcard, browser timezone |
+| Credential storage | [src/settings.cpp](src/settings.cpp) | NVS via `Preferences` |
 | microSD | [src/storage.cpp](src/storage.cpp) | SPI, reads `/quote.txt` |
 | Battery indicator | [src/battery.cpp](src/battery.cpp) | ADC + eFuse Vref calibration |
 | Wi-Fi + NTP | [src/wireless.cpp](src/wireless.cpp) | Station mode, timezone-aware |
@@ -71,8 +113,27 @@ samples, then reconnects.
 The sense divider is also only powered when the panel rail is on, hence the
 `epd_poweron()` around the measurement.
 
-With no battery attached the divider floats low; readings under 2.5 V are
-treated as "no battery" and the footer shows `USB` with a dashed icon.
+**Known weakness:** readings under 2.5 V are treated as "no battery" and the
+footer shows `USB` with a dashed icon — but on hardware, a USB-powered board
+with no cell attached reads at the 4.20 V clamp, not low. So the threshold does
+not actually distinguish the two, and the footer will report 100% either way.
+Telling them apart properly needs the charger's status line rather than a
+voltage threshold.
+
+### Captive portal — why it does not connect inline
+
+Submitting the form saves the credentials and answers immediately; the
+connection attempt happens afterwards, from `loop()`.
+
+That is deliberate. Bringing the station interface up retunes the radio to the
+home network's channel, and in `WIFI_AP_STA` mode the access point follows it —
+which kicks the phone off the setup network mid-request. Connecting inline
+would mean the user often never sees the response. Instead the portal says
+"saved, this network will disappear", and the **e-paper** reports the outcome.
+Having a display is what makes that trade acceptable.
+
+Improv does not have this problem: the USB link is unaffected by retuning
+Wi-Fi, so it connects inline and reports status through the protocol.
 
 ### SD card
 

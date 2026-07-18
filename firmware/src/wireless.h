@@ -2,11 +2,14 @@
 
 #include <Arduino.h>
 
-// Connects to the configured AP and syncs the clock over NTP. Returns false on
-// timeout or when no SSID is configured.
+// Connects to `ssid` and, on success, syncs the clock over NTP using the
+// stored timezone. Returns false on timeout or bad credentials.
 //
 // Call batteryRead() *before* this: the battery ADC channel is shared with the
 // Wi-Fi radio (see battery.h).
+bool wifiConnect(const String &ssid, const String &password);
+
+// Reconnects using the credentials in NVS.
 bool wifiBegin();
 
 bool wifiConnected();

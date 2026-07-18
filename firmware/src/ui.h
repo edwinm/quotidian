@@ -62,3 +62,12 @@ void uiDrawRule(int x, int y, int width, uint8_t color);
 // Vertical accent bar that fades from dark at the top to near-paper at the
 // bottom, using the panel's intermediate grey levels.
 void uiDrawAccentBar(int x, int y, int width, int height);
+
+// Renders `text` as a QR code with each module drawn `scale` pixels square,
+// including the mandatory 4-module quiet zone. Returns the total side length
+// in pixels, or 0 if the text did not fit. Drawn pure black on white: e-paper
+// greys would only hurt scanning contrast.
+int uiDrawQr(int x, int y, const char *text, int scale);
+
+// Side length uiDrawQr() would produce, without drawing anything.
+int uiQrSize(const char *text, int scale);

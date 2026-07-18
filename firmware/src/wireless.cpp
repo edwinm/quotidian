@@ -8,6 +8,7 @@
 #include <time.h>
 
 #include "config.h"
+#include "settings.h"
 
 // ---------------------------------------------------------------------------
 // Wi-Fi
@@ -16,14 +17,18 @@
 static bool sTimeSynced = false;
 
 bool wifiBegin() {
-    if (strlen(WIFI_SSID) == 0) {
-        Serial.println("[wifi] no SSID configured, staying offline");
+    return wifiConnect(settingsSsid(), settingsPassword());
+}
+
+bool wifiConnect(const String &ssid, const String &password) {
+    if (ssid.isEmpty()) {
+        Serial.println("[wifi] no credentials, staying offline");
         return false;
     }
 
-    Serial.printf("[wifi] connecting to %s", WIFI_SSID);
+    Serial.printf("[wifi] connecting to %s", ssid.c_str());
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(ssid.c_str(), password.c_str());
 
     uint32_t deadline = millis() + WIFI_TIMEOUT_MS;
     while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
@@ -40,7 +45,7 @@ bool wifiBegin() {
 
     Serial.printf("[wifi] connected, IP %s\n", WiFi.localIP().toString().c_str());
 
-    configTzTime(TIMEZONE, NTP_SERVER);
+    configTzTime(settingsTimezone().c_str(), NTP_SERVER);
     struct tm timeinfo;
     // getLocalTime() polls until the clock leaves 1970.
     sTimeSynced = getLocalTime(&timeinfo, 10000);
