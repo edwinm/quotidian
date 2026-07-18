@@ -4,9 +4,9 @@
   "description": "Daily quote by author birth/death date, sourced from Wikidata + Wikiquote",
   "type": "module",
   "scripts": {
-    "fetch:people": "node src/1-fetch-people.js",
-    "fetch:quotes": "node src/2-fetch-quotes.js",
-    "build": "node src/3-build.js",
+    "fetch:people": "node pipeline/1-fetch-people.js",
+    "fetch:quotes": "node pipeline/2-fetch-quotes.js",
+    "build": "node pipeline/3-build.js",
     "all": "npm run fetch:people && npm run fetch:quotes && npm run build"
   },
   "license": "MIT"

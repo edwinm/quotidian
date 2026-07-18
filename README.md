@@ -12,6 +12,21 @@ Example (11 February):
 >
 > 31 March 1596 – **11 February 1650**
 
+## Repository layout
+
+Two separate pieces of software live here — Node.js on the desktop, C++ on the
+device:
+
+| Path | Language | What it is |
+| --- | --- | --- |
+| `pipeline/` | Node.js | Fetches and builds the quote dataset (see below) |
+| `data/` | JSON | Output of the pipeline |
+| `firmware/` | C++ | ESP32-S3 e-paper display — see [firmware/README.md](firmware/README.md) |
+| `platformio.ini` | — | Firmware build config; at the root so PlatformIO finds it on open |
+
+The two halves are independent today: the firmware reads a quote from its SD
+card and does not yet consume `data/quotes-by-day.json`.
+
 ## Data sources
 
 Two sources are combined:
@@ -55,8 +70,8 @@ a `WARNING: N batch(es) failed`, the data is incomplete — just re-run it.
 ### Preview a day
 
 ```bash
-node src/pick.js              # today
-node src/pick.js 2026-02-11   # a specific date
+node pipeline/pick.js              # today
+node pipeline/pick.js 2026-02-11   # a specific date
 ```
 
 ## Output: `data/quotes-by-day.json`
