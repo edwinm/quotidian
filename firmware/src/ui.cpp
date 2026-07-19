@@ -9,6 +9,7 @@
 #include "fonts/font_small_bold.h"
 #include "fonts/font_title.h"
 
+
 // Quarter turn counter-clockwise. Flip to false if the display ends up upside
 // down for the way the device is actually stood up.
 static constexpr bool UI_ROTATE_CCW = true;

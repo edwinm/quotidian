@@ -107,27 +107,38 @@ The display library ships one font. [tools/fontconvert.py](tools/fontconvert.py)
 generates the rest from any TrueType file:
 
 ```bash
-# macOS ships its classic families as .ttc collections; pick the weight by index
-python3 tools/fontconvert.py --list x 0 /System/Library/Fonts/Supplemental/GillSans.ttc
-python3 tools/fontconvert.py FontBody 26 \
-    /System/Library/Fonts/Supplemental/GillSans.ttc -i 0 -o src/fonts/font_body.h
+python3 tools/fontconvert.py FontBody 26 Cabin-Regular.ttf -o src/fonts/font_body.h
 ```
 
-Six are checked in — **Gill Sans** regular and bold at 18, 26 and 36 px, covering
+Six are checked in — **Cabin** regular and bold at 18, 26 and 36 px, covering
 ASCII and Latin-1. Bitmaps are **uncompressed** on purpose: the rotating blitter
-reads them directly and would otherwise need zlib. That costs about 157 kB of
+reads them directly and would otherwise need zlib. That costs about 152 kB of
 flash.
 
-Gill Sans (Eric Gill, 1928) was chosen to suit the 1930s frame the display sits
-in. Of the period faces it is the most legible at these sizes: Futura is more
-emblematic of the era but has a low x-height and near-identical round letters,
-and the Didones that look most Art Deco — Bodoni, Didot — have hairlines thinner
-than a pixel at 18 px and break up entirely on this panel.
+Cabin (Pablo Impallari) sits in the humanist tradition of Edward Johnston and
+Eric Gill, which suits the 1930s frame the display lives in while staying
+legible at 18 px. Gill Sans itself was used first and reads slightly better
+still, but it is proprietary and cannot ship under MIT. Of the period faces,
+Futura-derived designs like Jost* have a lower x-height and rounder, less
+distinguishable letters — a real cost on the metadata line — and the Art Deco
+Didones (Bodoni, Didot) have hairlines thinner than a pixel at that size and
+break up entirely on this panel.
 
-**Licensing:** Gill Sans is proprietary and bundled with macOS, and these headers
-contain its rasterised outlines. That is fine for a private build; if this repo
-is ever published, swap in a freely licensed face. Roboto (Apache 2.0) was the
-previous choice and regenerates with the same command.
+**Licensing.** Cabin is OFL, and these headers hold its rasterised outlines, so
+they are a derivative of the font: [src/fonts/OFL.txt](src/fonts/OFL.txt)
+applies to them, while the code is MIT. OFL permits exactly this kind of
+bundling; it only requires that the notice travels with the font data.
+
+**Variable fonts need instantiating first.** Cabin ships from Google Fonts only
+as a variable font, and neither `set_var_named_instance()` nor
+`set_var_design_coords()` moved the weight axis in this freetype build — regular
+and bold came out byte-identical and the mistake was invisible until the file
+sizes were compared. Cut static instances with fonttools instead:
+
+```bash
+python3 -m fontTools.varLib.instancer "Cabin[wdth,wght].ttf" wght=700 wdth=100 \
+    -o Cabin-Bold.ttf
+```
 
 ### Grayscale and anti-aliasing
 

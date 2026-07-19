@@ -569,12 +569,19 @@ void setup() {
         return;  // sleeps, or falls through to loop() in development mode
     }
 
-    // An alarm that fires before the date has rolled would redraw yesterday.
-    // The guard is on the clock, not on the wake instant.
-    // The short test cycle deliberately skips this: on a 3-minute loop the date
-    // never rolls, and the guard would suppress every render.
+    // An alarm that fires before the date has rolled would redraw yesterday, so
+    // this compares the calendar day rather than trusting the wake instant.
+    //
+    // It applies ONLY to alarm wakes. Without that condition it fires on every
+    // boot of a day already rendered - so a reset or a button press would put
+    // the board straight back to sleep without drawing anything, which is
+    // exactly what it did.
+    //
+    // The short test cycle skips it too: on a 3-minute loop the date never
+    // rolls, and the guard would suppress every render.
     String lastRendered = settingsLastRendered();
-    if (!TEST_WAKE_SECONDS && lastRendered.length() && todayKey() == lastRendered) {
+    if (!TEST_WAKE_SECONDS && cause == WAKE_RTC_ALARM && lastRendered.length() &&
+        todayKey() == lastRendered) {
         sleepUntilDateRolls();
         return;  // sleeps, or falls through to loop() in development mode
     }

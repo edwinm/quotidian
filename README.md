@@ -159,3 +159,15 @@ device shows a different quote each year but a stable one within a day.
 Every one of the 366 calendar days has quotes (currently 22–212 per day, ~41k
 quote-instances total). `data/coverage-report.json` lists any empty or thin days —
 if a future run produces gaps, that's where they'll show.
+
+## Licence
+
+The code is MIT.
+
+The font data in `firmware/src/fonts/` is generated from
+[Cabin](https://fonts.google.com/specimen/Cabin) and is a derivative of it, so
+it carries Cabin's SIL Open Font License — see
+[firmware/src/fonts/OFL.txt](firmware/src/fonts/OFL.txt).
+
+The quotations in `data/` come from Wikiquote and Wikidata and are CC BY-SA 4.0;
+every entry records its licence and source, and the display credits them.

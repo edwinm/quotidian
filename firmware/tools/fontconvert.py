@@ -109,6 +109,9 @@ def main():
                     help="face index within a .ttc collection (see --list)")
     ap.add_argument("--list", action="store_true",
                     help="print the faces in the file and exit")
+    ap.add_argument("--instance", type=int, default=0,
+                    help="named instance of a variable font, 1-based "
+                         "(Cabin: 1=Regular, 4=Bold). 0 leaves the default.")
     args = ap.parse_args()
 
     path = os.path.expanduser(args.ttf)
@@ -123,6 +126,12 @@ def main():
         return
 
     face = freetype.Face(path, index=args.index)
+
+    # Variable fonts default to their Regular instance, so a bold cut has to be
+    # selected explicitly or every weight comes out identical.
+    if args.instance:
+        face.set_var_named_instance(args.instance)
+
     bitmaps, glyphs, intervals, metrics = build(face, args.size)
     emit(args.name, bitmaps, glyphs, intervals, metrics, args.out)
 
