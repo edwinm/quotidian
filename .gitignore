@@ -5,6 +5,11 @@ node_modules/
 # PlatformIO build output
 .pio/
 
+# PlatformIO regenerates these on open and they hold absolute local paths.
+# extensions.json is kept: it names the extensions this project needs.
+.vscode/*
+!.vscode/extensions.json
+
 # Regenerable pipeline intermediates (large). Rebuild with `npm run all`.
 data/people.json
 data/quotes-raw.json
