@@ -3,7 +3,6 @@
 #include <SPI.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include <driver/rtc_io.h>
 #include <esp_bt.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
@@ -12,43 +11,12 @@
 #include "epd_driver.h"
 #include "utilities.h"
 
-// PCF8563 INT (active low, 10k pull-up to VDD3V3) and the front button.
-static constexpr gpio_num_t kRtcIntPin = GPIO_NUM_9;
-static constexpr gpio_num_t kButtonPin = (gpio_num_t)BUTTON_1;
-
-WakeCause powerWakeCause() {
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    uint64_t mask = esp_sleep_get_ext1_wakeup_status();
-
-    // Raw values, because "power-on" is what this returns for anything it does
-    // not recognise - including a timer wake - and that ambiguity hid which
-    // source was actually firing.
-    // esp_reset_reason() is the one that says whether this was a wake at all:
-    // 8 = DEEPSLEEP, 1 = POWERON, 9 = BROWNOUT, 4 = PANIC, 3 = SW.
-    Serial.printf("[power] reset reason=%d, wakeup cause=%d, ext1 mask=0x%llX "
-                  "(RTC INT bit=%d, button bit=%d)\n",
-                  (int)esp_reset_reason(), (int)cause, mask,
-                  (int)((mask >> kRtcIntPin) & 1), (int)((mask >> kButtonPin) & 1));
-
-    switch (cause) {
-        case ESP_SLEEP_WAKEUP_EXT1:
-            if (mask & (1ULL << kRtcIntPin)) return WAKE_RTC_ALARM;
-            if (mask & (1ULL << kButtonPin)) return WAKE_BUTTON;
-            return WAKE_POWER_ON;
-        case ESP_SLEEP_WAKEUP_TIMER:
-            return WAKE_TIMER;
-        default:
-            return WAKE_POWER_ON;
-    }
-}
-
-const char *powerWakeCauseName(WakeCause cause) {
-    switch (cause) {
-        case WAKE_RTC_ALARM: return "RTC alarm";
-        case WAKE_BUTTON:    return "button";
-        case WAKE_TIMER:     return "backstop timer";
-        default:             return "power-on";
-    }
+void powerLogResetReason() {
+    // 1 = POWERON, 3 = SW, 4 = PANIC, 5 = INT_WDT, 8 = DEEPSLEEP, 9 = BROWNOUT.
+    // On this board an alarm-driven start reports POWERON, identical to a
+    // hand-pressed reset, which is why rtcAlarmFired() is what distinguishes
+    // them.
+    Serial.printf("[power] reset reason=%d\n", (int)esp_reset_reason());
 }
 
 // The SD card sits on VDD3V3, which is NOT switched by PWR_EN, so it stays
@@ -82,8 +50,8 @@ static void shutdownRadios() {
     esp_bt_controller_disable();
 }
 
-[[noreturn]] void powerDeepSleep() {
-    Serial.println("[power] entering deep sleep");
+[[noreturn]] void powerDown() {
+    Serial.println("[power] powering down");
     Serial.flush();
 
     // Drops the whole PWR_EN rail: e-paper supply and the blue LED7 with it.
@@ -94,26 +62,9 @@ static void shutdownRadios() {
     parkSdCardPins();
     Wire.end();
 
-    // Order matters: enabling ext1 reconfigures the pads, so pull-ups have to be
-    // applied afterwards or they are discarded. Both pins are active low and
-    // would otherwise float and wake the board at random.
-    esp_sleep_enable_ext1_wakeup((1ULL << kRtcIntPin) | (1ULL << kButtonPin),
-                                 ESP_EXT1_WAKEUP_ANY_LOW);
-
-    for (gpio_num_t pin : {kRtcIntPin, kButtonPin}) {
-        rtc_gpio_init(pin);
-        rtc_gpio_set_direction(pin, RTC_GPIO_MODE_INPUT_ONLY);
-        rtc_gpio_pullup_en(pin);
-        rtc_gpio_pulldown_dis(pin);
-    }
-
-    Serial.printf("[power] wake pins: RTC INT=%d button=%d (both must read 1)\n",
-                  digitalRead(kRtcIntPin), digitalRead(kButtonPin));
-    Serial.flush();
-
-    // Keeping the pull-ups alive means RTC_PERIPH has to stay powered; the
-    // alternative saves a few uA and loses the wake sources.
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-
+    // esp_deep_sleep_start() is what actually drops the rail on this board. No
+    // wake sources are configured because none can work: with the board off
+    // there is no RTC domain to hold a pin state and no timer to run. The
+    // PCF8563 alarm is wired to switch the board back on in hardware.
     esp_deep_sleep_start();
 }

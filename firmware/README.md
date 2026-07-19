@@ -47,8 +47,18 @@ iPhone, a captive portal is the only app-free option.
 
 ### Changing networks
 
-**Hold the front button for 3 seconds.** Credentials are erased and the device
-restarts into setup mode. Same procedure if you move house or change router.
+**Hold the user button (S4) down and tap reset.** Credentials are erased and the
+device restarts into setup mode. Same procedure if you move house or change
+router.
+
+It has to be that gesture rather than a long press while running, because in
+normal operation the board is only awake for a few seconds a night — and it is
+*off* the rest of the time, not asleep, so pressing a button does nothing at
+all. Holding it across a reset is the one moment the firmware is guaranteed to
+look.
+
+A long press does still work whenever the board happens to be awake: during
+setup mode, or throughout when `DEEP_SLEEP_ENABLED` is 0.
 
 If stored credentials stop working, the device falls back to setup mode on its
 own and the screen says which network it could not reach.
@@ -84,6 +94,7 @@ Improv has no channel for timezone data, so devices provisioned over USB keep
 | Battery indicator | [src/battery.cpp](src/battery.cpp) | ADC + eFuse Vref calibration |
 | Wi-Fi + NTP | [src/wireless.cpp](src/wireless.cpp) | Station mode, timezone-aware |
 | BLE | [src/wireless.cpp](src/wireless.cpp) | Standard Battery Service (0x180F) |
+| Nightly power-down | [src/power.cpp](src/power.cpp) | Board switches off; the RTC alarm switches it back on |
 
 ### Portrait orientation
 
@@ -157,6 +168,32 @@ values (`0x00`–`0xFF`), text takes 4-bit values (`0`–`15`). Both are named i
 
 The generated fonts cover ASCII and Latin-1. Accented characters like `é` work;
 typographic quotes like `“` do not, and fall back to `?`.
+
+### The board switches off, it does not sleep
+
+`powerDown()` calls `esp_deep_sleep_start()`, but that is not what happens.
+Dropping the rail switches the board off completely, and the PCF8563 alarm
+switches it back on — it is wired as a power switch, running on its own backup
+cell in between.
+
+The evidence: the reset reason is `POWERON`, never `DEEPSLEEP`;
+`esp_sleep_get_wakeup_cause()` reports nothing at all; and RTC memory does not
+survive, which is why the state that has to persist lives in NVS.
+
+Three consequences, none of them obvious from reading the sleep API calls:
+
+- **The RTC alarm is the only way back.** No GPIO wake — a chip with no power
+  cannot notice a button. No timer — nothing is running to count. Whether the
+  alarm was armed correctly is all that stands between a working display and a
+  dark one, which is why `rtcSetDailyAlarmUtc()` reads its registers back and
+  only reports `verified` once they hold what was written.
+- **An alarm start is indistinguishable from a reset** by reset reason alone.
+  `rtcAlarmFired()` reads the chip's alarm flag instead, before clearing it.
+- **Between updates the board is unreachable**, including for flashing. Hold
+  `IO0` and tap reset to get into the ROM bootloader.
+
+It is a better arrangement than deep sleep: off is properly off, rather than
+the ~380 µA the datasheet quotes for sleep.
 
 ### Battery — the ADC2 caveat
 

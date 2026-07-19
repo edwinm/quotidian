@@ -2,19 +2,17 @@
 
 #include <Arduino.h>
 
-enum WakeCause {
-    WAKE_POWER_ON,   // cold boot or reset
-    WAKE_RTC_ALARM,  // PCF8563 INT went low - the nightly update
-    WAKE_BUTTON,     // front button
-    WAKE_TIMER,      // the backstop fired, meaning the alarm did not
-};
+// Logs the reset reason. Kept because it is what revealed that this board does
+// not sleep at all: the reason is POWERON, never DEEPSLEEP.
+void powerLogResetReason();
 
-WakeCause powerWakeCause();
-const char *powerWakeCauseName(WakeCause cause);
-
-// Shuts down everything that draws current, then enters deep sleep. Does not
-// return.
+// Ends the cycle. Despite calling esp_deep_sleep_start(), the board does not
+// sleep - dropping the rail switches it off completely, and the PCF8563 alarm
+// switches it back on. Does not return.
 //
-// Wake sources are the RTC alarm (GPIO9) and the button (GPIO21), both active
-// low, both on RTC-capable pins.
-[[noreturn]] void powerDeepSleep();
+// There are consequently NO other ways back. No GPIO wake: a button cannot be
+// noticed by a chip with no power. No timer: nothing is running to count.
+// Whether the alarm was armed correctly is the single thing standing between a
+// working display and a dark one, which is why rtcSetDailyAlarmUtc() reads its
+// registers back and only then reports "verified".
+[[noreturn]] void powerDown();

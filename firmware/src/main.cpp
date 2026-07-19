@@ -16,7 +16,6 @@
 
 #include <Arduino.h>
 #include <Button2.h>
-#include <esp_sleep.h>
 
 #include "battery.h"
 #include "config.h"
@@ -68,10 +67,12 @@ static String sPendingPassword;
 // Populated when a connection attempt fails, so the setup screen can say why.
 static String sSetupError;
 
-// Why this cycle started. Recorded at boot and reported again just before
-// sleeping: the boot line itself is usually lost while USB CDC enumerates, and
-// this is the one fact that says whether the RTC alarm is doing its job.
-static WakeCause sWakeCause = WAKE_POWER_ON;
+// Whether the PCF8563 alarm is what switched the board on, as opposed to a
+// hand-pressed reset. Read from the chip's alarm flag at boot, because the
+// board power-cycles rather than waking and the reset reason cannot tell them
+// apart. Reported again before powering down: the boot line is usually lost
+// while USB CDC enumerates.
+static bool sWokeByAlarm = false;
 
 // --- Quote screen -----------------------------------------------------------
 
@@ -343,11 +344,14 @@ static void sleepUntilNextWake() {
     // than arming a nightly schedule against a time we do not have - the first
     // version armed nothing at all in this case and slept straight through.
     if (!timeSynced()) {
-        long retry = SLEEP_RETRY_MINUTES * 60L;
-        if (endCycleAwake(retry)) return;
-        Serial.printf("[power] clock unknown, retrying in %ld s\n", retry);
-        esp_sleep_enable_timer_wakeup((uint64_t)retry * 1000000ULL);
-        powerDeepSleep();
+        if (endCycleAwake(SLEEP_RETRY_MINUTES * 60L)) return;
+
+        // The absolute time is not trustworthy, but the chip still counts, so a
+        // relative alarm still brings the board back. There is no timer to fall
+        // back on.
+        Serial.printf("[power] clock unknown, retrying in %d min\n", SLEEP_RETRY_MINUTES);
+        rtcSetAlarmInMinutes(SLEEP_RETRY_MINUTES);
+        powerDown();
     }
 
     long seconds = secondsUntilNextWake();
@@ -359,30 +363,22 @@ static void sleepUntilNextWake() {
     rtcSetDailyAlarmUtc(utc.tm_hour, utc.tm_min);
     rtcLogAlarmState();
 
-    // Backstop only: the ESP32's own timer is minutes-per-day inaccurate, so it
-    // is set well after the alarm and exists purely so a failed alarm cannot
-    // strand the device.
-    // The backstop sits well after the alarm so the alarm normally wins, but
-    // close enough that a failed alarm does not strand the board for an hour.
-    long backstop = TEST_WAKE_SECONDS ? seconds + 120 : seconds + 3600;
-    esp_sleep_enable_timer_wakeup((uint64_t)backstop * 1000000ULL);
-    Serial.printf("[power] this cycle woke by %s; next update in %ld s (%.1f h)\n",
-                  powerWakeCauseName(sWakeCause), seconds, seconds / 3600.0);
+    Serial.printf("[power] started by %s; next update in %ld s (%.1f h)\n",
+                  sWokeByAlarm ? "RTC alarm" : "power-on/reset",
+                  seconds, seconds / 3600.0);
 
-    powerDeepSleep();
+    powerDown();
 }
 
 // Woke before the date rolled over - too early, or the alarm shifted an hour
 // across a DST change. Nothing to draw yet; come back at the real target.
+// Woke before the date rolled over - too early, or the alarm shifted an hour
+// across a DST change. Nothing to draw yet, so re-arm for the real target. This
+// is just sleepUntilNextWake(): with no timer left, re-arming the alarm is the
+// only mechanism there is, and it is the correct one.
 static void sleepUntilDateRolls() {
-    long seconds = secondsUntilNextWake();
-    if (endCycleAwake(seconds)) return;
-
-    Serial.printf("[power] woke early, date has not rolled - back to sleep for %ld s\n",
-                  seconds);
-
-    esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
-    powerDeepSleep();
+    Serial.println("[power] started early, date has not rolled - re-arming");
+    sleepUntilNextWake();
 }
 
 // --- The nightly update -----------------------------------------------------
@@ -479,14 +475,36 @@ static void onShortPress(Button2 &btn) {
     runDailyUpdate();
 }
 
-static void onLongPress(Button2 &btn) {
-    (void)btn;
-    Serial.println("[button] long press - clearing Wi-Fi credentials");
-
+static void forgetWifi() {
     settingsClear();
     renderMessage("Wi-Fi forgotten", "Restarting for setup...");
     delay(1500);
     ESP.restart();
+}
+
+static void onLongPress(Button2 &btn) {
+    (void)btn;
+    Serial.println("[button] long press - clearing Wi-Fi credentials");
+    forgetWifi();
+}
+
+// Held down at startup, the button forgets the network.
+//
+// The long press above only works while the board happens to be awake, which
+// in normal operation is a few seconds a night - so it is not a gesture anyone
+// can actually perform. This one is: hold the button, tap reset. Nothing else
+// on this board uses GPIO21, and the check runs before Button2 claims it.
+static bool buttonHeldAtBoot() {
+    pinMode(BUTTON_1, INPUT_PULLUP);
+    delay(20);  // let the pull-up settle
+
+    // Sample rather than read once: a single reading catches any glitch on the
+    // line as an intentional press.
+    for (int i = 0; i < 10; i++) {
+        if (digitalRead(BUTTON_1) != LOW) return false;
+        delay(20);
+    }
+    return true;
 }
 
 // --- Setup mode -------------------------------------------------------------
@@ -530,9 +548,7 @@ void setup() {
     Serial.begin(115200);
     delay(200);
 
-    WakeCause cause = powerWakeCause();
-    sWakeCause = cause;
-    Serial.printf("\n[boot] Quote of the Day - woke by %s\n", powerWakeCauseName(cause));
+    powerLogResetReason();
 
     if (!uiBegin()) {
         while (true) {
@@ -547,7 +563,13 @@ void setup() {
     // system clock and timezone come from it before anything else needs a date.
     rtcBegin();
     rtcApplyToSystemClock();
-    rtcClearAlarm();  // release INT, or the next sleep returns immediately
+
+    // Must be read before clearing: the flag is the only evidence of what
+    // started this cycle.
+    sWokeByAlarm = rtcAlarmFired();
+    rtcClearAlarm();
+    Serial.printf("[boot] Quote of the Day - started by %s\n",
+                  sWokeByAlarm ? "RTC alarm" : "power-on/reset");
 
     batteryBegin();
 
@@ -556,6 +578,11 @@ void setup() {
     sBattery = batteryRead();
     Serial.printf("[battery] %.2f V (%d%%)%s\n", sBattery.volts, sBattery.percent,
                   sBattery.present ? "" : " - no battery, running off USB");
+
+    if (buttonHeldAtBoot()) {
+        Serial.println("[button] held at startup - clearing Wi-Fi credentials");
+        forgetWifi();  // does not return
+    }
 
     sButton.begin(BUTTON_1);
     sButton.setLongClickTime(RESET_HOLD_MS);
@@ -580,7 +607,7 @@ void setup() {
     // The short test cycle skips it too: on a 3-minute loop the date never
     // rolls, and the guard would suppress every render.
     String lastRendered = settingsLastRendered();
-    if (!TEST_WAKE_SECONDS && cause == WAKE_RTC_ALARM && lastRendered.length() &&
+    if (!TEST_WAKE_SECONDS && sWokeByAlarm && lastRendered.length() &&
         todayKey() == lastRendered) {
         sleepUntilDateRolls();
         return;  // sleeps, or falls through to loop() in development mode
@@ -588,17 +615,6 @@ void setup() {
 
     sMode = MODE_RUNNING;
     runDailyUpdate();
-
-    // A button press means someone is standing there; stay up briefly so a long
-    // press can still reach the Wi-Fi reset.
-    if (cause == WAKE_BUTTON) {
-        Serial.println("[power] button wake, staying up briefly");
-        uint32_t until = millis() + BUTTON_AWAKE_MS;
-        while (millis() < until) {
-            sButton.loop();
-            delay(10);
-        }
-    }
 
     sleepUntilNextWake();
 }

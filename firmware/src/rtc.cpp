@@ -253,6 +253,29 @@ void rtcSetDailyAlarmUtc(int utcHour, int utcMinute) {
                   (status2Back >> 1) & 1, digitalRead(9));
 }
 
+void rtcSetAlarmInMinutes(int minutes) {
+    if (!sAvailable) return;
+
+    BusPower power;
+
+    struct tm now = {};
+    bool vl = false;
+    if (!readClock(&now, &vl)) return;
+
+    int total = now.tm_hour * 60 + now.tm_min + minutes;
+    rtcSetDailyAlarmUtc((total / 60) % 24, total % 60);
+}
+
+bool rtcAlarmFired() {
+    if (!sAvailable) return false;
+
+    BusPower power;
+
+    uint8_t status2 = 0;
+    if (!readRegs(kRegStatus2, &status2, 1)) return false;
+    return (status2 & 0x08) != 0;  // AF
+}
+
 void rtcLogAlarmState() {
     if (!sAvailable) return;
 

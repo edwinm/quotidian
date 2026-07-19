@@ -103,6 +103,3 @@
 // again at the next alarm. The button wakes it straight back into setup.
 #define SETUP_TIMEOUT_MS (15UL * 60UL * 1000UL)
 
-// After a button wake, stay up this long so a long press can still reach the
-// Wi-Fi reset before the device drops back to sleep.
-#define BUTTON_AWAKE_MS 30000UL
