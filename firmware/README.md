@@ -5,8 +5,9 @@ it renders a quote in anti-aliased grayscale type, reads its content from the
 microSD card, syncs the date over Wi-Fi, advertises the battery level over BLE,
 and shows a status footer.
 
-This targets the **non-touch** board revision — no touch controller is
-initialised or required.
+This targets the **non-touch** revision of the
+[LilyGo T5 4.7" e-paper board](https://lilygo.cc/products/t5-4-7-inch-e-paper-v2-3)
+— no touch controller is initialised or required.
 
 ## Build
 

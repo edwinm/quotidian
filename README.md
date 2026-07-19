@@ -33,8 +33,14 @@ author was born or died on today's date. See
 
 ## Getting started
 
-You need the LilyGo T5 4.7" e-paper board (ESP32-S3, non-touch), a microSD card,
-[Node.js](https://nodejs.org) and [PlatformIO](https://platformio.org).
+You need the [LilyGo T5 4.7" e-paper board](https://lilygo.cc/products/t5-4-7-inch-e-paper-v2-3)
+(ESP32-S3, **non-touch** version), a microSD card, [Node.js](https://nodejs.org)
+and [PlatformIO](https://platformio.org).
+
+The board is sold in touch and non-touch versions; this firmware targets the
+non-touch one and never initialises a touch controller. It has to be the
+ESP32-S3 variant — the older ESP32 board uses different pins for the panel, the
+SD card and the real-time clock.
 
 **1. Prepare the SD card.** It must be **FAT32** — the ESP32's SD library cannot
 read exFAT, which is how cards larger than 32 GB usually ship. On macOS, find
