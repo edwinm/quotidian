@@ -1,5 +1,5 @@
 /**
- * Quote of the Day - LilyGo T5 4.7" e-paper (ESP32-S3), non-touch version.
+ * Quotidian - LilyGo T5 4.7" e-paper (ESP32-S3), non-touch version.
  *
  * Portrait orientation: the 960x540 panel is driven through a 540x960 canvas
  * rotated a quarter turn counter-clockwise (see ui.h).
@@ -164,7 +164,7 @@ static void drawFooter() {
 static void renderQuoteScreen() {
     uiClearBuffer();
 
-    uiDrawText(Font::SmallBold, kMargin, 64, "QUOTE OF THE DAY", ink::kTextMid);
+    uiDrawText(Font::SmallBold, kMargin, 64, "QUOTIDIAN", ink::kTextMid);
     uiDrawTextRight(Font::Small, kContentRight, 64,
                     uiEllipsize(Font::Small, todayLong(), 260).c_str(), ink::kTextMid);
     uiDrawRule(kMargin, 86, kContentRight - kMargin, ink::kLight);
@@ -182,7 +182,7 @@ static void renderSetupScreen() {
     uiClearBuffer();
 
     uiDrawText(Font::Title, kMargin, 68, "Set up Wi-Fi", ink::kTextBlack);
-    uiDrawText(Font::Small, kMargin, 100, "Quote of the Day", ink::kTextMid);
+    uiDrawText(Font::Small, kMargin, 100, "Quotidian", ink::kTextMid);
     uiDrawRule(kMargin, 120, kContentRight - kMargin, ink::kLight);
 
     // --- QR, centred. 6 px per module scans comfortably at arm's length ---
@@ -580,7 +580,7 @@ void setup() {
     // started this cycle.
     sWokeByAlarm = rtcAlarmFired();
     rtcClearAlarm();
-    Serial.printf("[boot] Quote of the Day - started by %s\n",
+    Serial.printf("[boot] Quotidian - started by %s\n",
                   sWokeByAlarm ? "RTC alarm" : "power-on/reset");
 
     batteryBegin();

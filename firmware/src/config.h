@@ -28,7 +28,7 @@
 #define FIRMWARE_VERSION "1.0.0"
 
 // Advertised over BLE, and reported to Improv clients.
-#define BLE_DEVICE_NAME "Quote of the Day"
+#define BLE_DEVICE_NAME "Quotidian"
 
 // ---------------------------------------------------------------------------
 // Content

@@ -1,7 +1,7 @@
 {
-  "name": "quote-of-the-day",
+  "name": "quotidian",
   "version": "0.1.0",
-  "description": "Daily quote by author birth/death date, sourced from Wikidata + Wikiquote",
+  "description": "Quotidian - a daily quote by an author born or died on today's date, on e-paper",
   "type": "module",
   "scripts": {
     "fetch:people": "node pipeline/1-fetch-people.js",

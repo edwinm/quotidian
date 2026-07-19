@@ -1,4 +1,6 @@
-# Quote of the Day
+# Quotidian
+
+*quotidian* — daily; of every day. The word already contains "quot".
 
 A data pipeline that builds a per-day dataset of quotes by writers, poets and
 philosophers, keyed to each author's **birth or death date**. A screen device can

@@ -164,7 +164,7 @@ static void handleWifiSettings(const uint8_t *data, size_t len) {
 
 static void handleGetDeviceInfo() {
     String info[4] = {
-        "Quote of the Day",  // firmware name
+        "Quotidian",         // firmware name
         FIRMWARE_VERSION,    // version
         "ESP32-S3",          // chip family
         BLE_DEVICE_NAME,     // device name

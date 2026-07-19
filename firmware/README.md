@@ -1,4 +1,4 @@
-# Firmware — LilyGo T5 4.7" e-paper (ESP32-S3)
+# Quotidian firmware — LilyGo T5 4.7" e-paper (ESP32-S3)
 
 A minimal example sketch for the 960×540 e-paper board, run in **portrait**:
 it renders a quote in anti-aliased grayscale type, reads its content from the
@@ -227,7 +227,7 @@ callers. It reports strings that leave the canvas:
 and, separately, strings that land on top of earlier ones in the same frame:
 
 ```
-[layout] OVERLAP "Network: QuoteDisplay-8" (40,391-854,442) with "in Chrome or Edge."
+[layout] OVERLAP "Network: Quotidian-8" (40,391-854,442) with "in Chrome or Edge."
 ```
 
 The second check exists because the first is not sufficient: two strings can

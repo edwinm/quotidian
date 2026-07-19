@@ -88,7 +88,7 @@ static void handleRoot() {
 
     String page = F("<!doctype html><html><head><meta charset='utf-8'>"
                     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                    "<title>Quote of the Day setup</title>");
+                    "<title>Quotidian setup</title>");
     page += FPSTR(kStyle);
     page += F("</head><body><div class='card'>"
               "<h1>Connect to Wi-Fi</h1>"
@@ -223,7 +223,7 @@ void portalBegin(PortalSubmitCallback onSubmit) {
 
     sOnSubmit = onSubmit;
 
-    sApSsid = String("QuoteDisplay-") + deviceSuffix();
+    sApSsid = String("Quotidian-") + deviceSuffix();
     sApPassword = randomPassword(8);
 
     // AP_STA rather than AP: the station interface is what makes scanning for
