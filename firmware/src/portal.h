@@ -29,6 +29,9 @@ void portalLoop();
 
 void portalStop();
 
+// millis() of the last request served. 0 until somebody connects.
+uint32_t portalLastActivityMs();
+
 String portalSsid();
 String portalPassword();
 

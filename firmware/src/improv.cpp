@@ -2,6 +2,8 @@
 
 #include <WiFi.h>
 
+#include <vector>
+
 #include "config.h"
 
 // --- Protocol constants (Improv Serial v1) ----------------------------------
@@ -30,12 +32,22 @@ enum Error : uint8_t {
     ERROR_UNKNOWN           = 0xFF,
 };
 
+// Values taken from the official SDK (improv-wifi/sdk-cpp, src/improv.h) rather
+// than from prose. An earlier version had everything from 0x02 onwards shifted
+// by one, so the browser's very first probe - 0x02, "what is your state?" - was
+// read as IDENTIFY and answered with nothing. The page simply reported no
+// device. A hand-written test client repeated the same numbering and agreed
+// with the firmware, which is exactly why it went unnoticed.
 enum Command : uint8_t {
+    // IDENTIFY and GET_CURRENT_STATE genuinely share 0x02 in the SDK. Answering
+    // with the current state is what matters; identifying is optional.
     CMD_WIFI_SETTINGS     = 0x01,
-    CMD_IDENTIFY          = 0x02,
-    CMD_GET_CURRENT_STATE = 0x03,
-    CMD_GET_DEVICE_INFO   = 0x04,
-    CMD_GET_WIFI_NETWORKS = 0x05,
+    CMD_GET_CURRENT_STATE = 0x02,
+    CMD_GET_DEVICE_INFO   = 0x03,
+    CMD_GET_WIFI_NETWORKS = 0x04,
+    CMD_HOSTNAME          = 0x05,
+    CMD_DEVICE_NAME       = 0x06,
+    CMD_GET_NETWORK_STATE = 0x07,
 };
 
 // Largest packet we accept: an SSID and password are 32 and 64 bytes plus
@@ -49,6 +61,7 @@ static uint8_t sState = STATE_READY;
 
 static uint8_t sBuffer[kMaxPayload + 16];
 static size_t  sLength = 0;   // bytes currently held in sBuffer
+static uint32_t sLastActivity = 0;
 
 // --- Sending ----------------------------------------------------------------
 
@@ -162,8 +175,22 @@ static void handleGetDeviceInfo() {
 static void handleGetWifiNetworks() {
     int found = WiFi.scanNetworks();
 
+    // A scan reports one result per access point, so a mesh or a dual-band
+    // router shows up several times over. The reference implementation filters
+    // these out and so does this - a list with the same name four times is
+    // worse than useless to somebody picking their network.
+    std::vector<String> seen;
+
     for (int i = 0; i < found; i++) {
         if (WiFi.SSID(i).isEmpty()) continue;
+
+        bool duplicate = false;
+        for (const String &s : seen) {
+            if (s == WiFi.SSID(i)) { duplicate = true; break; }
+        }
+        if (duplicate) continue;
+        seen.push_back(WiFi.SSID(i));
+
         String entry[3] = {
             WiFi.SSID(i),
             String(WiFi.RSSI(i)),
@@ -196,11 +223,10 @@ static void handleCommand(const uint8_t *payload, size_t len) {
         case CMD_WIFI_SETTINGS:
             handleWifiSettings(data, dataLen);
             break;
-        case CMD_IDENTIFY:
-            // Nothing to blink; the e-paper is already showing setup hints.
-            Serial.println("\n[improv] identify");
-            break;
         case CMD_GET_CURRENT_STATE:
+            // Also IDENTIFY. There is nothing to blink - the panel is already
+            // showing the setup instructions - so answering with the state is
+            // the whole job, and it is what lets the browser find the device.
             sendState(sState);
             break;
         case CMD_GET_DEVICE_INFO:
@@ -210,6 +236,11 @@ static void handleCommand(const uint8_t *payload, size_t len) {
             handleGetWifiNetworks();
             break;
         default:
+            // 0x05 HOSTNAME, 0x06 DEVICE_NAME and 0x07 GET_NETWORK_STATE are
+            // deliberately not implemented. The reference implementation
+            // (esphome/improv_serial) handles the same four commands and
+            // answers everything else exactly this way, so this is the correct
+            // response rather than a gap to be filled in later.
             sendError(ERROR_UNKNOWN_RPC);
             break;
     }
@@ -248,6 +279,7 @@ static void feed(uint8_t byte) {
     for (size_t i = 0; i < total - 1; i++) sum += sBuffer[i];
 
     if (sum == sBuffer[total - 1] && sBuffer[7] == TYPE_RPC_COMMAND) {
+        sLastActivity = millis();
         handleCommand(sBuffer + 9, payloadLen);
     }
 
@@ -260,6 +292,10 @@ void improvBegin(ImprovConnectCallback onConnect) {
     sOnConnect = onConnect;
     sLength = 0;
     Serial.println("[improv] listening on serial");
+}
+
+uint32_t improvLastActivityMs() {
+    return sLastActivity;
 }
 
 void improvSetProvisioned(bool provisioned) {

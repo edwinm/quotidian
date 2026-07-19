@@ -514,17 +514,28 @@ static bool buttonHeldAtBoot() {
 static void runSetupMode() {
     enterSetupMode();
 
+    // The window is measured from the last sign of life, not from when setup
+    // started. Provisioning takes as long as it takes - reading a QR, typing a
+    // password, retrying a typo - and having the board switch off mid-attempt
+    // is the one thing it must not do.
+    //
     // In development mode the window never closes; there is nothing useful to
     // sleep for, and recursing to restart the loop would eventually eat stack.
-    uint32_t deadline = millis() + SETUP_TIMEOUT_MS;
-    while (!DEEP_SLEEP_ENABLED || (int32_t)(millis() - deadline) < 0) {
+    uint32_t lastActivity = millis();
+    while (!DEEP_SLEEP_ENABLED ||
+           (int32_t)(millis() - (lastActivity + SETUP_TIMEOUT_MS)) < 0) {
         sButton.loop();
         improvLoop();
         portalLoop();
 
+        // Any packet from a browser, or any page served, means somebody is
+        // standing there.
+        uint32_t seen = max(improvLastActivityMs(), portalLastActivityMs());
+        if (seen > lastActivity) lastActivity = seen;
+
         if (sPendingCredentials) {
             applyPendingCredentials();
-            deadline = millis() + SETUP_TIMEOUT_MS;  // on failure, another go
+            lastActivity = millis();  // on failure, another full window
         }
 
         // Either route may have succeeded; both land here.
@@ -536,7 +547,8 @@ static void runSetupMode() {
         delay(5);
     }
 
-    Serial.println("[power] setup timed out, sleeping");
+    Serial.printf("[power] setup idle for %lu min, powering down\n",
+                  SETUP_TIMEOUT_MS / 60000UL);
     portalStop();
     renderMessage("Setup paused", "Press the button to try again.");
     sleepUntilNextWake();

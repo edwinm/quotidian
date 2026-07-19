@@ -10,6 +10,7 @@ static DNSServer sDns;
 static WebServer sServer(80);
 static PortalSubmitCallback sOnSubmit = nullptr;
 static bool sRunning = false;
+static uint32_t sLastActivity = 0;
 
 static String sApSsid;
 static String sApPassword;
@@ -79,6 +80,8 @@ button{width:100%;margin-top:22px;padding:14px;font-size:16px;font-weight:600;
 )CSS";
 
 static void handleRoot() {
+    sLastActivity = millis();
+
     // Cached scan results would go stale while the user is standing there, so
     // scan on each load. Takes a couple of seconds.
     int found = WiFi.scanNetworks();
@@ -174,6 +177,8 @@ document.getElementById('tzlabel').textContent =
 }
 
 static void handleSave() {
+    sLastActivity = millis();
+
     String ssid = sServer.arg("ssid");
     String pass = sServer.arg("pass");
     String tz = sServer.arg("tz");
@@ -251,6 +256,10 @@ void portalLoop() {
     if (!sRunning) return;
     sDns.processNextRequest();
     sServer.handleClient();
+}
+
+uint32_t portalLastActivityMs() {
+    return sLastActivity;
 }
 
 void portalStop() {

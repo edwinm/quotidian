@@ -18,6 +18,10 @@ void improvBegin(ImprovConnectCallback onConnect);
 // Feeds pending serial bytes through the parser. Call from loop().
 void improvLoop();
 
+// millis() of the last valid packet handled, so a caller can tell whether
+// somebody is actively provisioning. 0 until the first packet arrives.
+uint32_t improvLastActivityMs();
+
 // Marks the device as already provisioned, so a browser that connects later
 // sees the correct state.
 void improvSetProvisioned(bool provisioned);
