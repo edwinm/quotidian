@@ -138,7 +138,8 @@ break up entirely on this panel.
 **Licensing.** Cabin is OFL, and these headers hold its rasterised outlines, so
 they are a derivative of the font: [src/fonts/OFL.txt](src/fonts/OFL.txt)
 applies to them, while the code is MIT. OFL permits exactly this kind of
-bundling; it only requires that the notice travels with the font data.
+bundling; it only requires that the notice travels with the font data. See
+[../NOTICE](../NOTICE).
 
 **Variable fonts need instantiating first.** Cabin ships from Google Fonts only
 as a variable font, and neither `set_var_named_instance()` nor

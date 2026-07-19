@@ -19,15 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This licence covers the code. Two things bundled here are under their own terms:
-
-  firmware/src/fonts/*.h  Generated from Cabin and derivative of it, therefore
-                          under the SIL Open Font License. See
-                          firmware/src/fonts/OFL.txt.
-
-  data/                   Quotations from Wikiquote and Wikidata, CC BY-SA 4.0.
-                          Each entry records its licence and source, and the
-                          display credits them.

@@ -10,5 +10,5 @@
     "all": "npm run fetch:people && npm run fetch:quotes && npm run build && npm run export:device",
     "export:device": "node pipeline/4-export-device.js"
   },
-  "license": "MIT"
+  "license": "MIT AND OFL-1.1 AND CC-BY-SA-4.0"
 }

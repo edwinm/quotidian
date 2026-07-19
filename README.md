@@ -167,12 +167,9 @@ if a future run produces gaps, that's where they'll show.
 
 ## Licence
 
-The code is MIT.
+The code is MIT — see [LICENSE](LICENSE).
 
-The font data in `firmware/src/fonts/` is generated from
-[Cabin](https://fonts.google.com/specimen/Cabin) and is a derivative of it, so
-it carries Cabin's SIL Open Font License — see
-[firmware/src/fonts/OFL.txt](firmware/src/fonts/OFL.txt).
-
-The quotations in `data/` come from Wikiquote and Wikidata and are CC BY-SA 4.0;
-every entry records its licence and source, and the display credits them.
+Two bundled things are not: the font headers are derivative of Cabin and stay
+under the SIL Open Font License, and the quotations are CC BY-SA 4.0 from
+Wikiquote. [NOTICE](NOTICE) sets out both, and as an SPDX expression the
+repository is `MIT AND OFL-1.1 AND CC-BY-SA-4.0`.
