@@ -3,6 +3,7 @@
 #include <SPI.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <driver/rtc_io.h>
 #include <esp_bt.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
@@ -11,12 +12,19 @@
 #include "epd_driver.h"
 #include "utilities.h"
 
-void powerLogResetReason() {
-    // 1 = POWERON, 3 = SW, 4 = PANIC, 5 = INT_WDT, 8 = DEEPSLEEP, 9 = BROWNOUT.
-    // On this board an alarm-driven start reports POWERON, identical to a
-    // hand-pressed reset, which is why rtcAlarmFired() is what distinguishes
-    // them.
-    Serial.printf("[power] reset reason=%d\n", (int)esp_reset_reason());
+// PCF8563 alarm INT (active low, 10k pull-up) and the front button, both on
+// RTC-capable pins so they can wake deep sleep.
+static constexpr gpio_num_t kRtcIntPin = GPIO_NUM_9;
+static constexpr gpio_num_t kButtonPin = (gpio_num_t)BUTTON_1;
+
+void powerLogWakeReason() {
+    // reset reason: 1 POWERON, 3 SW, 5 INT_WDT, 8 DEEPSLEEP, 9 BROWNOUT.
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    uint64_t mask = esp_sleep_get_ext1_wakeup_status();
+    Serial.printf("[power] reset reason=%d, wakeup cause=%d, ext1 mask=0x%llX "
+                  "(RTC INT=%d button=%d)\n",
+                  (int)esp_reset_reason(), (int)cause, mask,
+                  (int)((mask >> kRtcIntPin) & 1), (int)((mask >> kButtonPin) & 1));
 }
 
 // The SD card sits on VDD3V3, which is NOT switched by PWR_EN, so it stays
@@ -62,9 +70,22 @@ static void shutdownRadios() {
     parkSdCardPins();
     Wire.end();
 
-    // esp_deep_sleep_start() is what actually drops the rail on this board. No
-    // wake sources are configured because none can work: with the board off
-    // there is no RTC domain to hold a pin state and no timer to run. The
-    // PCF8563 alarm is wired to switch the board back on in hardware.
+    // Wake on either pin going low: the RTC alarm (GPIO9) or the button (GPIO21).
+    // ext1 reconfigures the pads, so the pull-ups are applied afterwards, and
+    // RTC_PERIPH is kept powered so those pull-ups survive into sleep.
+    esp_sleep_enable_ext1_wakeup((1ULL << kRtcIntPin) | (1ULL << kButtonPin),
+                                 ESP_EXT1_WAKEUP_ANY_LOW);
+    for (gpio_num_t pin : {kRtcIntPin, kButtonPin}) {
+        rtc_gpio_init(pin);
+        rtc_gpio_set_direction(pin, RTC_GPIO_MODE_INPUT_ONLY);
+        rtc_gpio_pullup_en(pin);
+        rtc_gpio_pulldown_dis(pin);
+    }
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+    Serial.printf("[power] sleeping; wake pins RTC INT=%d button=%d (both should read 1)\n",
+                  digitalRead(kRtcIntPin), digitalRead(kButtonPin));
+    Serial.flush();
+
     esp_deep_sleep_start();
 }

@@ -560,7 +560,7 @@ void setup() {
     Serial.begin(115200);
     delay(200);
 
-    powerLogResetReason();
+    powerLogWakeReason();
 
     if (!uiBegin()) {
         while (true) {
