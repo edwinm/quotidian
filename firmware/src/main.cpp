@@ -37,6 +37,11 @@ static constexpr int kTextX  = kMargin + kGutter;
 static constexpr int kContentRight = UI_WIDTH - kMargin;
 static constexpr int kColumnWidth  = kContentRight - kTextX;
 
+// The quote itself has no accent bar, so it needs no gutter either: it runs the
+// full width between the margins, which is what centres it on the page.
+static constexpr int kBodyX     = kMargin;
+static constexpr int kBodyWidth = kContentRight - kMargin;
+
 // Shown when there is no SD card, or no readable quote file on it.
 static const Quote kFallbackQuote = {
     "I think, therefore I am",
@@ -81,7 +86,7 @@ static constexpr int kQuoteBottom = 800;
 static constexpr int kQuoteLead   = 46;  // leading for Font::Large (42 px box)
 
 static void drawQuote() {
-    std::vector<String> lines = uiWrapText(Font::Large, sQuote.text, kColumnWidth);
+    std::vector<String> lines = uiWrapText(Font::Large, sQuote.text, kBodyWidth);
 
     // Measure the whole block first so it can be optically centred.
     const int bodyHeight   = lines.size() * kQuoteLead;
@@ -98,19 +103,16 @@ static void drawQuote() {
     int top = kQuoteTop + ((kQuoteBottom - kQuoteTop) - total) / 2;
     if (top < kQuoteTop) top = kQuoteTop;
 
-    // The accent bar spans the quotation only, not the attribution.
-    uiDrawAccentBar(kMargin, top, 4, bodyHeight);
-
     int y = top + uiAscender(Font::Large);
     for (const String &line : lines) {
-        uiDrawText(Font::Large, kTextX, y, line.c_str(), ink::kTextBlack);
+        uiDrawText(Font::Large, kBodyX, y, line.c_str(), ink::kTextBlack);
         y += kQuoteLead;
     }
 
     y = top + bodyHeight + authorGap + uiAscender(Font::BodyBold);
     String author = sQuote.author.length() ? sQuote.author : String("Unknown");
-    uiDrawText(Font::BodyBold, kTextX, y,
-               uiEllipsize(Font::BodyBold, author, kColumnWidth).c_str(),
+    uiDrawText(Font::BodyBold, kBodyX, y,
+               uiEllipsize(Font::BodyBold, author, kBodyWidth).c_str(),
                ink::kTextBlack);
 
     // Dates, drawn as three runs on one baseline. The middle run is the day and
@@ -123,11 +125,11 @@ static void drawQuote() {
         String suffix = sQuote.datesSuffix;
         int used = uiTextWidth(Font::Small, sQuote.datesPrefix.c_str()) +
                    uiTextWidth(Font::SmallBold, sQuote.datesBold.c_str());
-        if (used + uiTextWidth(Font::Small, suffix.c_str()) > kColumnWidth) {
-            suffix = uiEllipsize(Font::Small, suffix, kColumnWidth - used);
+        if (used + uiTextWidth(Font::Small, suffix.c_str()) > kBodyWidth) {
+            suffix = uiEllipsize(Font::Small, suffix, kBodyWidth - used);
         }
 
-        int x = kTextX;
+        int x = kBodyX;
         x = uiDrawText(Font::Small, x, y, sQuote.datesPrefix.c_str(), ink::kTextMid);
         x = uiDrawText(Font::SmallBold, x, y, sQuote.datesBold.c_str(), ink::kTextBlack);
         uiDrawText(Font::Small, x, y, suffix.c_str(), ink::kTextMid);
@@ -147,9 +149,30 @@ static void drawFooter() {
 
     if (sQuote.attribution.length()) {
         uiDrawText(Font::Small, kMargin, baseline,
-                   uiEllipsize(Font::Small, sQuote.attribution, kColumnWidth).c_str(),
+                   uiEllipsize(Font::Small, sQuote.attribution, kBodyWidth).c_str(),
                    ink::kTextLight);
     }
+
+#if SHOW_CLOCK_DIAGNOSTICS
+    // Temporary. Everything needed to tell whether the clock and the alarm
+    // agree with the wall clock, read off the panel because serial cannot be
+    // opened without resetting the board.
+    struct tm lt;
+    char local[40] = "no clock";
+    if (timeSynced() && getLocalTime(&lt, 0)) {
+        snprintf(local, sizeof(local), "%02d-%02d %02d:%02d local",
+                 lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
+    }
+    uiDrawText(Font::Small, kMargin, baseline - 30,
+               uiEllipsize(Font::Small, rtcDiagnostics(), kBodyWidth).c_str(),
+               ink::kTextLight);
+    uiDrawText(Font::Small, kMargin, baseline - 56,
+               uiEllipsize(Font::Small,
+                           String(local) + "  TZ " + settingsTimezone() +
+                           (sWokeByAlarm ? "  by ALARM" : "  by reset"),
+                           kBodyWidth).c_str(),
+               ink::kTextLight);
+#endif
 
     if (!sBattery.present || sBattery.percent > LOW_BATTERY_PERCENT) return;
 

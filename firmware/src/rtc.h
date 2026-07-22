@@ -48,6 +48,11 @@ void rtcSetAlarmInMinutes(int minutes);
 // Read it before rtcClearAlarm(), which is what resets the flag.
 bool rtcAlarmFired();
 
+// The chip's own view of things, as one line: its UTC time, the armed alarm,
+// and the interrupt/flag bits. Rendered on screen because opening the serial
+// port resets this board, which makes serial useless for observing it.
+String rtcDiagnostics();
+
 // Logs the chip's alarm registers and control byte. An alarm that never fires
 // is otherwise invisible - this is what caught the first version arming nothing
 // at all when the clock was not yet set.

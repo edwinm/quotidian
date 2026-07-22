@@ -276,6 +276,28 @@ bool rtcAlarmFired() {
     return (status2 & 0x08) != 0;  // AF
 }
 
+String rtcDiagnostics() {
+    if (!sAvailable) return "RTC absent";
+
+    BusPower power;
+
+    uint8_t status2 = 0, alarm[4] = {0};
+    readRegs(kRegStatus2, &status2, 1);
+    readRegs(kRegAlarmMin, alarm, 4);
+
+    struct tm now = {};
+    bool vl = false;
+    readClock(&now, &vl);
+
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "chip %02d-%02d %02d:%02d UTC | alarm %02d:%02d | AIE%d AF%d VL%d",
+             now.tm_mon + 1, now.tm_mday, now.tm_hour, now.tm_min,
+             fromBcd(alarm[1] & 0x3F), fromBcd(alarm[0] & 0x7F),
+             (status2 >> 1) & 1, (status2 >> 3) & 1, vl ? 1 : 0);
+    return String(buf);
+}
+
 void rtcLogAlarmState() {
     if (!sAvailable) return;
 

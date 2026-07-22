@@ -47,6 +47,12 @@
 // noise; a warning is information.
 #define LOW_BATTERY_PERCENT 10
 
+// Draws a line of clock/alarm state at the foot of the quote screen. On for now
+// while the nightly wake time is being chased down: the serial port cannot be
+// opened without resetting this board, so the screen is the only way to read
+// what the clock actually thinks. Set to 0 once that is settled.
+#define SHOW_CLOCK_DIAGNOSTICS 1
+
 // ---------------------------------------------------------------------------
 // Sleep schedule
 // ---------------------------------------------------------------------------
