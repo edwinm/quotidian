@@ -47,11 +47,14 @@
 // noise; a warning is information.
 #define LOW_BATTERY_PERCENT 10
 
-// Draws a line of clock/alarm state at the foot of the quote screen. On for now
-// while the nightly wake time is being chased down: the serial port cannot be
-// opened without resetting this board, so the screen is the only way to read
-// what the clock actually thinks. Set to 0 once that is settled.
-#define SHOW_CLOCK_DIAGNOSTICS 1
+// Draws a line of clock/alarm state at the foot of the quote screen: local
+// time, timezone, the RTC chip's own UTC time, the armed alarm and its flags.
+//
+// Off by default - it is debug text on a display meant to be looked at. Turn it
+// on when the clock or the nightly wake needs investigating. It lives on the
+// panel rather than in the serial log because the serial port cannot be opened
+// on this board without resetting the chip.
+#define SHOW_CLOCK_DIAGNOSTICS 0
 
 // ---------------------------------------------------------------------------
 // Sleep schedule

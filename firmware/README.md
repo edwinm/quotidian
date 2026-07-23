@@ -171,6 +171,24 @@ values (`0x00`–`0xFF`), text takes 4-bit values (`0`–`15`). Both are named i
 The generated fonts cover ASCII and Latin-1. Accented characters like `é` work;
 typographic quotes like `“` do not, and fall back to `?`.
 
+### Flashing: finish with a cold boot, no buttons
+
+After `pio run -t upload` this board usually stays in ROM download mode instead
+of running what was just written. The screen keeps its last image, so it looks
+like a working device while nothing is executing — no render, no alarm, nothing
+overnight. That cost a night of testing before it was understood.
+
+Always end a flash with: **unplug USB, wait a few seconds, plug back in without
+touching any button.** That is a clean power-on with GPIO0 high, which starts
+the application. Holding BOOT during the replug does the opposite — it is how
+you deliberately enter download mode to flash in the first place.
+
+Do not open the serial port to check. On this board that resets the chip, often
+straight back into download mode; `SHOW_CLOCK_DIAGNOSTICS` exists because of
+this. To tell whether the board is running, watch whether the USB port
+disappears a few seconds after boot: gone means it reached deep sleep, which is
+what it should do.
+
 ### The board switches off, it does not sleep
 
 `powerDown()` calls `esp_deep_sleep_start()`, but that is not what happens.
