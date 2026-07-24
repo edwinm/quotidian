@@ -29,6 +29,9 @@
 #include "utilities.h"
 #include "wireless.h"
 
+// Defined by ESP-IDF but its header sits in a compat path off the include set.
+extern "C" void esp_brownout_disable(void);
+
 // --- Layout -----------------------------------------------------------------
 
 static constexpr int kMargin = 36;
@@ -580,7 +583,19 @@ static void runSetupMode() {
 // --- Lifecycle --------------------------------------------------------------
 
 void setup() {
+    // Disable the brownout detector first: the e-paper boost converter's inrush
+    // dips VDD3V3 below the S3's brownout threshold for a moment, resetting the
+    // board (reset reason 9). The dip is transient, not a real undervoltage, and
+    // it is worse on battery's higher source impedance than on USB - which is
+    // why the nightly wake failed on battery while working on USB.
+    esp_brownout_disable();
+
     Serial.begin(115200);
+    // Never block on Serial. With ARDUINO_USB_CDC_ON_BOOT the port is USB CDC;
+    // if a host has it open but is not reading (or once the TX buffer fills), a
+    // blocking write or flush hangs forever. That is what stalled powerDown
+    // during bench testing. 0 = drop output rather than wait.
+    Serial.setTxTimeoutMs(0);
     delay(200);
 
     powerLogWakeReason();

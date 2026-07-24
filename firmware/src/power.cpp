@@ -60,12 +60,10 @@ static void shutdownRadios() {
 
 [[noreturn]] void powerDown() {
     Serial.println("[power] powering down");
-    Serial.flush();
 
     // Drops the whole PWR_EN rail: e-paper supply and the blue LED7 with it.
     // The panel holds its image with no power at all.
     epd_poweroff_all();
-
     shutdownRadios();
     parkSdCardPins();
     Wire.end();
@@ -83,9 +81,8 @@ static void shutdownRadios() {
     }
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
-    Serial.printf("[power] sleeping; wake pins RTC INT=%d button=%d (both should read 1)\n",
+    Serial.printf("[power] sleeping; wake pins RTC INT=%d button=%d\n",
                   digitalRead(kRtcIntPin), digitalRead(kButtonPin));
-    Serial.flush();
 
     esp_deep_sleep_start();
 }
