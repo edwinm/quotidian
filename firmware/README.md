@@ -38,7 +38,7 @@ device's own access point; the captive portal then opens by itself. Pick your
 network, type its password, done.
 
 **With a computer** — connect USB and open
-[improv-wifi.com/demo](https://www.improv-wifi.com/demo/) in Chrome or Edge.
+[improv-wifi.com](https://www.improv-wifi.com/) in Chrome or Edge.
 This uses [Improv Serial](https://www.improv-wifi.com/serial/) over Web Serial:
 no app, no network switching.
 

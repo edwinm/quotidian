@@ -79,7 +79,7 @@ pio run -t upload -t monitor
 
 **4. Connect it to Wi-Fi.** The display boots into setup mode and shows you how:
 scan the QR code with a phone, or open
-[improv-wifi.com/demo](https://www.improv-wifi.com/demo/) in Chrome while it is
+[improv-wifi.com](https://www.improv-wifi.com/) in Chrome while it is
 plugged in. Nothing needs to be edited in the source, and the credentials are
 stored on the device rather than in the repo.
 
