@@ -40,11 +40,6 @@ static constexpr int kTextX  = kMargin + kGutter;
 static constexpr int kContentRight = UI_WIDTH - kMargin;
 static constexpr int kColumnWidth  = kContentRight - kTextX;
 
-// The quote itself has no accent bar, so it needs no gutter either: it runs the
-// full width between the margins, which is what centres it on the page.
-static constexpr int kBodyX     = kMargin;
-static constexpr int kBodyWidth = kContentRight - kMargin;
-
 // Shown when there is no SD card, or no readable quote file on it.
 static const Quote kFallbackQuote = {
     "I think, therefore I am",
@@ -88,8 +83,27 @@ static constexpr int kQuoteTop    = 140;
 static constexpr int kQuoteBottom = 800;
 static constexpr int kQuoteLead   = 46;  // leading for Font::Large (42 px box)
 
-static void drawQuote() {
-    std::vector<String> lines = uiWrapText(Font::Large, sQuote.text, kBodyWidth);
+// Side margins for the quote screen. Wide margins frame a short quote nicely;
+// a long one would turn into a tall, thin column, so it drops to the narrower
+// margin to gain width. The whole screen - header, quote, footer - shares the
+// chosen margin so everything stays aligned.
+static constexpr int kWideMargin   = 3 * kMargin;  // 108: short quotes
+static constexpr int kNarrowMargin = 2 * kMargin;  //  72: longer quotes
+static constexpr int kWideMarginMaxLines = 5;      // above this, use kNarrowMargin
+
+// Picks the quote-screen margin from how many lines the quote wraps to at the
+// wide setting. Cheap enough to wrap twice; drawQuote wraps again to lay out.
+static int quoteMargin() {
+    int wideWidth = UI_WIDTH - 2 * kWideMargin;
+    if ((int)uiWrapText(Font::Large, sQuote.text, wideWidth).size() > kWideMarginMaxLines)
+        return kNarrowMargin;
+    return kWideMargin;
+}
+
+static void drawQuote(int margin) {
+    const int bodyX     = margin;
+    const int bodyWidth = UI_WIDTH - 2 * margin;
+    std::vector<String> lines = uiWrapText(Font::Large, sQuote.text, bodyWidth);
 
     // Measure the whole block first so it can be optically centred.
     const int bodyHeight   = lines.size() * kQuoteLead;
@@ -108,14 +122,14 @@ static void drawQuote() {
 
     int y = top + uiAscender(Font::Large);
     for (const String &line : lines) {
-        uiDrawText(Font::Large, kBodyX, y, line.c_str(), ink::kTextBlack);
+        uiDrawText(Font::Large, bodyX, y, line.c_str(), ink::kTextBlack);
         y += kQuoteLead;
     }
 
     y = top + bodyHeight + authorGap + uiAscender(Font::BodyBold);
     String author = sQuote.author.length() ? sQuote.author : String("Unknown");
-    uiDrawText(Font::BodyBold, kBodyX, y,
-               uiEllipsize(Font::BodyBold, author, kBodyWidth).c_str(),
+    uiDrawText(Font::BodyBold, bodyX, y,
+               uiEllipsize(Font::BodyBold, author, bodyWidth).c_str(),
                ink::kTextBlack);
 
     // Dates, drawn as three runs on one baseline. The middle run is the day and
@@ -128,11 +142,11 @@ static void drawQuote() {
         String suffix = sQuote.datesSuffix;
         int used = uiTextWidth(Font::Small, sQuote.datesPrefix.c_str()) +
                    uiTextWidth(Font::SmallBold, sQuote.datesBold.c_str());
-        if (used + uiTextWidth(Font::Small, suffix.c_str()) > kBodyWidth) {
-            suffix = uiEllipsize(Font::Small, suffix, kBodyWidth - used);
+        if (used + uiTextWidth(Font::Small, suffix.c_str()) > bodyWidth) {
+            suffix = uiEllipsize(Font::Small, suffix, bodyWidth - used);
         }
 
-        int x = kBodyX;
+        int x = bodyX;
         x = uiDrawText(Font::Small, x, y, sQuote.datesPrefix.c_str(), ink::kTextMid);
         x = uiDrawText(Font::SmallBold, x, y, sQuote.datesBold.c_str(), ink::kTextBlack);
         uiDrawText(Font::Small, x, y, suffix.c_str(), ink::kTextMid);
@@ -147,12 +161,14 @@ static void drawQuote() {
 //
 // The battery appears only once it is nearly flat, so it reads as a warning
 // rather than as decoration.
-static void drawFooter() {
-    const int baseline = 910;
+static void drawFooter(int margin) {
+    const int baseline   = 910;
+    const int right      = UI_WIDTH - margin;
+    const int bodyWidth  = UI_WIDTH - 2 * margin;
 
     if (sQuote.attribution.length()) {
-        uiDrawText(Font::Small, kMargin, baseline,
-                   uiEllipsize(Font::Small, sQuote.attribution, kBodyWidth).c_str(),
+        uiDrawText(Font::Small, margin, baseline,
+                   uiEllipsize(Font::Small, sQuote.attribution, bodyWidth).c_str(),
                    ink::kTextLight);
     }
 
@@ -166,21 +182,21 @@ static void drawFooter() {
         snprintf(local, sizeof(local), "%02d-%02d %02d:%02d local",
                  lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
     }
-    uiDrawText(Font::Small, kMargin, baseline - 30,
-               uiEllipsize(Font::Small, rtcDiagnostics(), kBodyWidth).c_str(),
+    uiDrawText(Font::Small, margin, baseline - 30,
+               uiEllipsize(Font::Small, rtcDiagnostics(), bodyWidth).c_str(),
                ink::kTextLight);
-    uiDrawText(Font::Small, kMargin, baseline - 56,
+    uiDrawText(Font::Small, margin, baseline - 56,
                uiEllipsize(Font::Small,
                            String(local) + "  TZ " + settingsTimezone() +
                            (sWokeByAlarm ? "  by ALARM" : "  by reset"),
-                           kBodyWidth).c_str(),
+                           bodyWidth).c_str(),
                ink::kTextLight);
 #endif
 
     if (!sBattery.present || sBattery.percent > LOW_BATTERY_PERCENT) return;
 
     const int iconW = 44;
-    const int iconX = kContentRight - iconW;
+    const int iconX = right - iconW;
     uiDrawBattery(iconX, baseline - 15, sBattery.percent);
 
     String label = String(sBattery.percent) + "%";
@@ -190,13 +206,16 @@ static void drawFooter() {
 static void renderQuoteScreen() {
     uiClearBuffer();
 
-    uiDrawText(Font::SmallBold, kMargin, 64, "QUOTIDIAN", ink::kTextMid);
-    uiDrawTextRight(Font::Small, kContentRight, 64,
-                    uiEllipsize(Font::Small, todayLong(), 260).c_str(), ink::kTextMid);
-    uiDrawRule(kMargin, 86, kContentRight - kMargin, ink::kLight);
+    const int margin = quoteMargin();
+    const int right  = UI_WIDTH - margin;
 
-    drawQuote();
-    drawFooter();
+    uiDrawText(Font::SmallBold, margin, 64, "QUOTIDIAN", ink::kTextMid);
+    uiDrawTextRight(Font::Small, right, 64,
+                    uiEllipsize(Font::Small, todayLong(), 260).c_str(), ink::kTextMid);
+    uiDrawRule(margin, 86, right - margin, ink::kLight);
+
+    drawQuote(margin);
+    drawFooter(margin);
     uiFlush();
 }
 
