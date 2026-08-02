@@ -2,7 +2,7 @@
 
 A minimal example sketch for the 960×540 e-paper board, run in **portrait**:
 it renders a quote in anti-aliased grayscale type, reads its content from the
-microSD card, syncs the date over Wi-Fi, advertises the battery level over BLE,
+internal flash, syncs the date over Wi-Fi, advertises the battery level over BLE,
 and shows a status footer.
 
 This targets the **non-touch** revision of the
@@ -93,8 +93,8 @@ Improv has no channel for timezone data, so devices provisioned over USB keep
 | Improv Serial provisioning | [src/improv.cpp](src/improv.cpp) | Full protocol, shares the log port |
 | Captive portal + QR | [src/portal.cpp](src/portal.cpp) | SoftAP, DNS wildcard, browser timezone |
 | Credential storage | [src/settings.cpp](src/settings.cpp) | NVS via `Preferences` |
-| microSD | [src/storage.cpp](src/storage.cpp) | SPI, reads today's `/quotes/MM-DD.tsv` |
-| Device export | [../pipeline/4-export-device.js](../pipeline/4-export-device.js) | 24 MB JSON → 366 small files |
+| Storage | [src/storage.cpp](src/storage.cpp) | LittleFS in internal flash, reads today's `/quotes/MM-DD.tsv` |
+| Device export | [../pipeline/4-export-device.js](../pipeline/4-export-device.js) | Best 20 per day → 366 small files, 1.2 MB |
 | Battery indicator | [src/battery.cpp](src/battery.cpp) | ADC + eFuse Vref calibration |
 | Wi-Fi + NTP | [src/wireless.cpp](src/wireless.cpp) | Station mode, timezone-aware |
 | BLE | [src/wireless.cpp](src/wireless.cpp) | Standard Battery Service (0x180F) |
@@ -125,10 +125,72 @@ generates the rest from any TrueType file:
 python3 tools/fontconvert.py FontBody 26 Cabin-Regular.ttf -o src/fonts/font_body.h
 ```
 
-Six are checked in — **Cabin** regular and bold at 18, 26 and 36 px, covering
-ASCII and Latin-1. Bitmaps are **uncompressed** on purpose: the rotating blitter
-reads them directly and would otherwise need zlib. That costs about 152 kB of
-flash.
+The generated headers are checked in; the TrueType sources are not, so a
+regeneration starts by fetching Cabin from its OFL home and cutting the two
+static instances (see the variable-font note below):
+
+```bash
+pip install freetype-py fonttools
+curl -sSL -o "Cabin[wdth,wght].ttf" \
+  'https://github.com/google/fonts/raw/main/ofl/cabin/Cabin%5Bwdth%2Cwght%5D.ttf'
+python3 -m fontTools.varLib.instancer "Cabin[wdth,wght].ttf" wght=400 wdth=100 -o Cabin-Regular.ttf
+python3 -m fontTools.varLib.instancer "Cabin[wdth,wght].ttf" wght=700 wdth=100 -o Cabin-Bold.ttf
+```
+
+All six, at the sizes [src/ui.h](src/ui.h) declares:
+
+```bash
+python3 tools/fontconvert.py FontSmall     18 Cabin-Regular.ttf -o src/fonts/font_small.h
+python3 tools/fontconvert.py FontSmallBold 18 Cabin-Bold.ttf    -o src/fonts/font_small_bold.h
+python3 tools/fontconvert.py FontBody      26 Cabin-Regular.ttf -o src/fonts/font_body.h
+python3 tools/fontconvert.py FontBodyBold  26 Cabin-Bold.ttf    -o src/fonts/font_body_bold.h
+python3 tools/fontconvert.py FontLarge     36 Cabin-Regular.ttf -o src/fonts/font_large.h
+python3 tools/fontconvert.py FontTitle     36 Cabin-Bold.ttf    -o src/fonts/font_title.h
+```
+
+Check the reported `advance_y`/`ascender`/`descender` against what they were:
+the layout constants in [src/main.cpp](src/main.cpp) are tuned to them, so a
+metric that moves silently reflows every screen.
+
+Six are checked in — **Cabin** regular and bold at 18, 26 and 36 px, 227 glyphs
+each. Bitmaps are **uncompressed** on purpose: the rotating blitter reads them
+directly and would otherwise need zlib. That costs about 176 kB of flash.
+
+#### The glyph set is generated from the data, not guessed
+
+The device is fed UTF-8 exactly as the pipeline produces it. Nothing is
+transliterated down to fit the fonts — the fonts are built to fit the text:
+
+```bash
+npm run export:device
+node firmware/tools/charset.mjs      # prints the INTERVALS list
+node firmware/tools/checkcoverage.mjs  # fails if any character has no glyph
+```
+
+`charset.mjs` walks the exported day files and emits the exact
+`INTERVALS` for [tools/fontconvert.py](tools/fontconvert.py); paste it in and
+regenerate. Beyond ASCII and Latin-1 this corpus needs 30 more codepoints —
+accented names from Polish, Vietnamese, Turkish and Māori, plus the em dashes,
+curly quotes and ellipses Wikiquote writes.
+
+`checkcoverage.mjs` reads the intervals back out of the *generated header*, so
+it verifies what was actually built rather than what was intended, and is worth
+running after any dataset change. A missing glyph is otherwise invisible until
+it shows up as a `?` on the panel weeks later — which is exactly what had been
+happening to one quote in twelve, every em dash and curly apostrophe in the set.
+
+Two traps, both of which have already cost time here:
+
+- **Do not widen the intervals speculatively.** Bridging small gaps pulled in
+  U+2016, U+2017 and U+201B, which Cabin has no outline for, so they baked in as
+  empty `.notdef` boxes. `fontconvert.py` now warns when a requested codepoint
+  is absent from the face.
+- **Cabin is a Latin face.** It has nothing for CJK, so a Japanese codepoint
+  would come out as a box whatever is requested. The pipeline rejects text
+  outside the Latin blocks (`isSupportedScript` in
+  [../pipeline/common.js](../pipeline/common.js)) — one quote in 7320, Bashō's
+  haiku, which carries its own romaji anyway. Real CJK would need a second font
+  and a fallback path in `ui.cpp`.
 
 Cabin (Pablo Impallari) sits in the humanist tradition of Edward Johnston and
 Eric Gill, which suits the 1930s frame the display lives in while staying
@@ -171,8 +233,9 @@ Two colour scales are in play, which is easy to trip over: shapes take 8-bit
 values (`0x00`–`0xFF`), text takes 4-bit values (`0`–`15`). Both are named in
 `ink::` in [src/ui.h](src/ui.h).
 
-The generated fonts cover ASCII and Latin-1. Accented characters like `é` work;
-typographic quotes like `“` do not, and fall back to `?`.
+`get_glyph()` falls back to `?` for any codepoint the font lacks, so a gap in
+the interval set is silent everywhere except the panel. `checkcoverage.mjs`
+exists to make that failure loud; see the font section above.
 
 ### Flashing: finish with a cold boot, no buttons
 
@@ -295,43 +358,61 @@ Having a display is what makes that trade acceptable.
 Improv does not have this problem: the USB link is unaffected by retuning
 Wi-Fi, so it connects inline and reports status through the protocol.
 
-### SD card and why the dataset lives there
+### Where the dataset lives, and why not on a card
 
-The full dataset (`data/quotes-by-day.json`) is **24 MB**. It fits nowhere on
-this device:
+The corpus behind the dataset (`data/quotes-raw.json`) is 12 MB and 41,000
+quote-instances, which fits nowhere on this device. But the device does not
+need the corpus — it needs one quote a day.
+
+Step 3 ranks each calendar day and keeps only the best 20 (see
+[../pipeline/score.js](../pipeline/score.js)), and `npm run export:device`
+writes those as one file per day, holding only the fields that get rendered.
+That comes to **1.2 MB across 366 files**, the largest day being 4 kB. The
+device opens exactly one, so no more than 4 kB is ever in RAM and nothing has
+to be streamed or indexed.
+
+Twenty is not an arbitrary cut. The rotation shows one quote per day per year,
+so a day's list *is* a twenty-year cycle — beyond that the extra quotes are
+never reached within the life of the device, and below it the same quote comes
+round too often.
 
 | Store | Capacity | Verdict |
 | --- | --- | --- |
-| Internal flash | 16 MB total, 6.5 MB app partition | too small |
-| PSRAM | 8 MB | too small |
-| SD card | GBs | fits easily |
+| **Internal flash, stock table** | 3.375 MB filesystem partition | **used** — 1.43 MB in 4 kB LittleFS blocks, 42% full |
+| SD card | GBs | works, but cannot be powered down |
+| Internal flash, no OTA slot | ~11.9 MB | unnecessary now |
+| PSRAM | 8 MB | volatile, not a store |
 
-So `npm run export:device` splits it into one file per calendar day, keeping
-only the fields that get rendered. That comes to **7.8 MB across 366 files**,
-the largest day being 40 kB. The device opens exactly one — so no more than
-40 kB is ever in RAM, and nothing has to be streamed or indexed.
+It started on an SD card, and the shrink is what let it move. At 8.5 MB the
+export only fitted internal flash with a custom partition table; at 1.2 MB it
+fits the **stock** one, leaving the unused 6.25 MB OTA slot alone.
 
-Worth knowing: at 7.8 MB the *exported* set would also fit in internal flash
-with a custom partition table (single app slot, no OTA, ~13 MB FFat). The SD
-card was kept because the dataset can then be refreshed by swapping a card
-instead of reflashing.
+The card had to go because it sits on the unswitched 3V3 rail and cannot be
+turned off in software, which made it the prime suspect for the sleep current
+that flattened a 2000 mAh cell in a week. The slot is still on the board, and
+`parkSdCardPins()` still releases its lines before sleep in case a card is left
+in it.
 
-The card must be formatted **FAT32**. The Arduino SD library does not support
-exFAT, which is the default on cards above 32 GB — such a card mounts as "no
-card" with no further explanation. Copy the export to the card root as
-`/quotes/`:
+The one property the card had worth keeping was that the data could be replaced
+without reflashing the firmware. `uploadfs` preserves it:
 
 ```bash
-npm run export:device
-COPYFILE_DISABLE=1 cp -r data/device/quotes /Volumes/YOUR_CARD/
+npm run export:device     # regenerate, and verify every glyph exists
+pio run -t buildfs        # pack the image, and check it fits
+pio run -t uploadfs       # write it, without touching the application
 ```
 
-On macOS, `COPYFILE_DISABLE=1` stops `cp` writing an `._name` resource fork
-next to every file on a FAT volume. Harmless to the device, but it doubles the
-file count on the card.
+**`data_dir` must be set in the `[platformio]` section**, and is, in
+[../platformio.ini](../platformio.ini). `board_build.data_dir` inside the
+environment looks plausible, is accepted in silence, and does nothing — the
+image is then built from the default `data/`, which here means trying to flash
+the 12 MB corpus and failing with `No more free space`.
 
 Without the dataset the device still runs: it logs `/quotes/MM-DD.tsv not found`
-and falls back to `/quote.txt`, then to a built-in quote.
+and falls back to `/quote.txt`, then to a built-in quote. `LittleFS.begin()` is
+called with `formatOnFail = false` on purpose — a missing filesystem and an
+empty one look the same to the caller, and formatting would destroy the dataset
+to paper over what is usually a bad flash.
 
 The format is tab-separated, one quote per line, in the field order
 `text, author, datesPrefix, datesBold, datesSuffix, attribution`. It is not

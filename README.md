@@ -26,56 +26,42 @@ device:
 | `firmware/` | C++ | ESP32-S3 e-paper display — see [firmware/README.md](firmware/README.md) |
 | `platformio.ini` | — | Firmware build config; at the root so PlatformIO finds it on open |
 
-The firmware consumes this dataset: `npm run export:device` splits it into one
-file per calendar day for the SD card, and the display shows a quote whose
-author was born or died on today's date. See
-[firmware/README.md](firmware/README.md).
+The firmware consumes this dataset: `npm run export:device` writes one file per
+calendar day, and the display shows a quote whose author was born or died on
+today's date. See [firmware/README.md](firmware/README.md).
 
 ## Getting started
 
 You need the [LilyGo T5 4.7" e-paper board](https://lilygo.cc/products/t5-4-7-inch-e-paper-v2-3)
-(ESP32-S3, **non-touch** version), a microSD card, [Node.js](https://nodejs.org)
-and [PlatformIO](https://platformio.org).
+(ESP32-S3, **non-touch** version), [Node.js](https://nodejs.org) and
+[PlatformIO](https://platformio.org). No SD card — the quotes live in the
+board's own flash.
 
 The board is sold in touch and non-touch versions; this firmware targets the
 non-touch one and never initialises a touch controller. It has to be the
-ESP32-S3 variant — the older ESP32 board uses different pins for the panel, the
-SD card and the real-time clock.
+ESP32-S3 variant — the older ESP32 board uses different pins for the panel and
+the real-time clock.
 
-**1. Prepare the SD card.** It must be **FAT32** — the ESP32's SD library cannot
-read exFAT, which is how cards larger than 32 GB usually ship. On macOS, find
-the disk and erase it:
-
-```bash
-diskutil list                                      # find your card, e.g. /dev/disk10
-diskutil eraseDisk FAT32 QUOTES MBRFormat /dev/disk10
-```
-
-Check the size in `diskutil list` before erasing — the command destroys
-everything on the disk it is given, and getting the identifier wrong means
-erasing something else.
-
-**2. Copy the quotes onto it.**
+**1. Generate the quote files.**
 
 ```bash
 npm install
-npm run export:device                  # 366 day files, ~7.8 MB
-COPYFILE_DISABLE=1 cp -r data/device/quotes /Volumes/QUOTES/
+npm run export:device                  # 366 day files, ~1.2 MB
 ```
-
-`COPYFILE_DISABLE=1` matters on macOS: without it, Finder and `cp` write an
-`._name` resource fork beside every file on a FAT volume, doubling the file
-count. The device ignores them, but they are pure clutter. If you already
-copied without it, `find /Volumes/QUOTES -name "._*" -delete` cleans up.
 
 `data/quotes-by-day.json` is already in the repo, so there is no need to re-run
 the Wikidata/Wikiquote fetch unless you want fresher data.
 
-**3. Build and flash.** Insert the card in the board, connect USB:
+**2. Build and flash.** Connect USB, then write the firmware and the quotes:
 
 ```bash
-pio run -t upload -t monitor
+pio run -t upload                      # the application
+pio run -t uploadfs                    # the quotes, into the flash filesystem
 ```
+
+The two are independent: `uploadfs` replaces the dataset without touching the
+application, so refreshing the quotes later does not mean reflashing the
+firmware.
 
 **4. Connect it to Wi-Fi.** The display boots into setup mode and shows you how:
 scan the QR code with a phone, or open

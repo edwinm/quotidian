@@ -1,25 +1,34 @@
 #include "storage.h"
 
-#include <SD.h>
-#include <SPI.h>
+#include <LittleFS.h>
 
 #include "config.h"
 #include "utilities.h"
 
+// The dataset lives in internal flash, in the partition the stock 16 MB table
+// labels "spiffs" - the label is historical, the contents are LittleFS.
+// LittleFS::begin() defaults to that label, so no custom partition table is
+// needed. See firmware/README.md.
+static constexpr bool kFormatOnFail = false;
+
 static bool sMounted = false;
 
 bool storageBegin() {
-    // The card has its own SPI bus, separate from the e-paper's parallel bus.
-    SPI.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
+    // runDailyUpdate() calls this on every render, and a button press can render
+    // twice in one wake. Mounting an already-mounted filesystem is not free and
+    // logs from inside the core.
+    if (sMounted) return true;
 
-    sMounted = SD.begin(SD_CS, SPI);
+    // Never format on failure. An empty filesystem and a missing one look the
+    // same to the caller - both fall back to the built-in quote - but formatting
+    // would throw the dataset away to fix a fault that is usually a bad flash.
+    sMounted = LittleFS.begin(kFormatOnFail);
     if (!sMounted) {
-        Serial.println("[sd] mount failed (no card?)");
-        SPI.end();
+        Serial.println("[fs] mount failed - run `pio run -t uploadfs`");
         return false;
     }
 
-    Serial.printf("[sd] mounted: %s\n", storageDescription().c_str());
+    Serial.printf("[fs] mounted: %s\n", storageDescription().c_str());
     return true;
 }
 
@@ -28,21 +37,14 @@ bool storageMounted() {
 }
 
 String storageDescription() {
-    if (!sMounted) return "no card";
+    if (!sMounted) return "not mounted";
 
-    const char *type;
-    switch (SD.cardType()) {
-        case CARD_MMC:  type = "MMC";  break;
-        case CARD_SD:   type = "SDSC"; break;
-        case CARD_SDHC: type = "SDHC"; break;
-        default:        type = "?";    break;
-    }
-
-    float gb = SD.cardSize() / (1024.0f * 1024.0f * 1024.0f);
-    return String(gb, 1) + " GB " + type;
+    const size_t used = LittleFS.usedBytes();
+    const size_t total = LittleFS.totalBytes();
+    return String(used / 1024) + " kB used of " + String(total / 1024) + " kB";
 }
 
-// Counts newlines without holding the file in memory. Day files run to ~40 kB,
+// Counts newlines without holding the file in memory. Day files run to ~4 kB,
 // so this is a single quick pass.
 static int countLines(File &file) {
     file.seek(0);
@@ -91,15 +93,15 @@ bool storageReadQuoteForDay(int month, int day, int year, Quote &out) {
     char path[32];
     snprintf(path, sizeof(path), "%s/%02d-%02d.tsv", QUOTE_DIR, month, day);
 
-    File file = SD.open(path, FILE_READ);
+    File file = LittleFS.open(path, FILE_READ);
     if (!file) {
-        Serial.printf("[sd] %s not found\n", path);
+        Serial.printf("[fs] %s not found\n", path);
         return false;
     }
 
     int lines = countLines(file);
     if (lines <= 0) {
-        Serial.printf("[sd] %s is empty\n", path);
+        Serial.printf("[fs] %s is empty\n", path);
         file.close();
         return false;
     }
@@ -116,11 +118,11 @@ bool storageReadQuoteForDay(int month, int day, int year, Quote &out) {
 
     line.replace("\r", "");
     if (!parseRow(line, out)) {
-        Serial.printf("[sd] %s line %d did not parse\n", path, wanted);
+        Serial.printf("[fs] %s line %d did not parse\n", path, wanted);
         return false;
     }
 
-    Serial.printf("[sd] %s: quote %d of %d, %s\n", path, wanted + 1, lines,
+    Serial.printf("[fs] %s: quote %d of %d, %s\n", path, wanted + 1, lines,
                   out.author.c_str());
     return true;
 }
@@ -128,7 +130,7 @@ bool storageReadQuoteForDay(int month, int day, int year, Quote &out) {
 bool storageReadOverrideQuote(Quote &out) {
     if (!sMounted) return false;
 
-    File file = SD.open(QUOTE_FILE, FILE_READ);
+    File file = LittleFS.open(QUOTE_FILE, FILE_READ);
     if (!file) return false;
 
     out.text   = file.readStringUntil('\n');
@@ -145,6 +147,6 @@ bool storageReadOverrideQuote(Quote &out) {
 
     if (out.text.isEmpty()) return false;
 
-    Serial.printf("[sd] using override %s (%s)\n", QUOTE_FILE, out.author.c_str());
+    Serial.printf("[fs] using override %s (%s)\n", QUOTE_FILE, out.author.c_str());
     return true;
 }

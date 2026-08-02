@@ -1,6 +1,5 @@
 #include "power.h"
 
-#include <SPI.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <driver/rtc_io.h>
@@ -54,18 +53,19 @@ const char *powerWakeSourceName(WakeSource source) {
     }
 }
 
-// The SD card sits on VDD3V3, which is NOT switched by PWR_EN, so it stays
-// powered through deep sleep and cannot be turned off in software. What can be
-// controlled is how its lines are left.
+// The SD slot sits on VDD3V3, which is NOT switched by PWR_EN, so anything in
+// it stays powered through deep sleep and cannot be turned off in software.
+// That is why the dataset moved to internal flash - see storage.h.
 //
-// This matters more than it looks: the bus has 10k pull-ups to VDD3V3 (R5, R13,
-// R16). Leaving a line driven low would sink 3.3 V / 10 k = 330 uA on that pin
-// alone - most of the board's entire sleep budget, on one wire. Releasing the
-// pins to high-impedance lets the pull-ups hold them high at no cost, and
-// leaves the card deselected.
+// The pins are still parked, because the slot is still on the board and a card
+// may still be in it. The bus has 10k pull-ups to VDD3V3 (R5, R13, R16), so
+// leaving a line driven low would sink 3.3 V / 10 k = 330 uA on that pin alone.
+// Releasing them to high-impedance lets the pull-ups hold them high at no cost,
+// and leaves any card that is present deselected.
+//
+// SPI is no longer initialised at all now that storage is LittleFS, so there is
+// no bus to end - only pads to release.
 static void parkSdCardPins() {
-    SPI.end();
-
     const gpio_num_t pins[] = {(gpio_num_t)SD_MISO, (gpio_num_t)SD_MOSI,
                                (gpio_num_t)SD_SCLK, (gpio_num_t)SD_CS};
     for (gpio_num_t pin : pins) {

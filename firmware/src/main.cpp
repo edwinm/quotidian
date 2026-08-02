@@ -40,7 +40,7 @@ static constexpr int kTextX  = kMargin + kGutter;
 static constexpr int kContentRight = UI_WIDTH - kMargin;
 static constexpr int kColumnWidth  = kContentRight - kTextX;
 
-// Shown when there is no SD card, or no readable quote file on it.
+// Shown when the filesystem is missing or holds no readable quote for today.
 static const Quote kFallbackQuote = {
     "I think, therefore I am",
     "René Descartes",

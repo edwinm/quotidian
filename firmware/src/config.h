@@ -34,8 +34,9 @@
 // Content
 // ---------------------------------------------------------------------------
 
-// Per-day quote files on the SD card, written by `npm run export:device`.
-// The device opens /quotes/MM-DD.tsv for today's date.
+// Per-day quote files in internal flash, written by `npm run export:device`
+// and flashed with `pio run -t uploadfs`. The device opens /quotes/MM-DD.tsv
+// for today's date.
 #define QUOTE_DIR "/quotes"
 
 // Manual override, consulted only when the day file is unavailable. Line 1 is
