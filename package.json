@@ -8,7 +8,8 @@
     "fetch:quotes": "node pipeline/2-fetch-quotes.js",
     "build": "node pipeline/3-build.js",
     "all": "npm run fetch:people && npm run fetch:quotes && npm run build && npm run export:device",
-    "export:device": "node pipeline/4-export-device.js"
+    "export:device": "node pipeline/4-export-device.js && node firmware/tools/checkcoverage.mjs",
+    "fonts:charset": "node firmware/tools/charset.mjs"
   },
   "license": "MIT AND OFL-1.1 AND CC-BY-SA-4.0"
 }

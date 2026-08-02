@@ -18,9 +18,47 @@ import os
 
 import freetype
 
-# Inclusive code point ranges. Latin-1 is included so accented names such as
-# "René Descartes" render correctly; anything outside falls back to '?'.
-INTERVALS = [(32, 126), (160, 255)]
+# Inclusive code point ranges to build glyphs for.
+#
+# NOT hand-written. The device is fed UTF-8 exactly as the pipeline produces it,
+# and this list is generated from that data so the fonts fit the text rather
+# than the text being cut down to fit the fonts:
+#
+#     npm run export:device
+#     node firmware/tools/charset.mjs
+#
+# Re-run both after changing the dataset or the ranking, and paste the result
+# here. Anything the fonts do not cover renders as '?' via ui.cpp, so a codepoint
+# that appears in the data and not in this list is a visible bug.
+#
+# ASCII and Latin-1 are unconditional - they carry the UI's own strings and any
+# future quote. The rest is what this corpus actually uses: accented names from
+# Polish, Vietnamese, Turkish and Māori, and the typographic punctuation
+# Wikiquote writes (em dashes, curly quotes, ellipsis).
+INTERVALS = [
+    (0x0020, 0x007E),  # ASCII
+    (0x00A0, 0x00FF),  # Latin-1 Supplement
+    (0x0101, 0x0101),  # ā
+    (0x0105, 0x0107),  # ąĆć
+    (0x0119, 0x0119),  # ę
+    (0x0129, 0x012B),  # ĩĪī
+    (0x0131, 0x0131),  # ı
+    (0x0142, 0x0144),  # łŃń
+    (0x014C, 0x014D),  # Ōō
+    (0x0153, 0x0153),  # œ
+    (0x015B, 0x015B),  # ś
+    (0x0161, 0x0161),  # š
+    (0x0169, 0x016D),  # ũŪūŬŭ
+    (0x017C, 0x017E),  # żŽž
+    (0x02BC, 0x02BC),  # ʼ
+    (0x1E6C, 0x1E6C),  # Ṭ
+    (0x1EA1, 0x1EA1),  # ạ
+    (0x1EA5, 0x1EA5),  # ấ
+    (0x2013, 0x2014),  # – —
+    (0x2018, 0x2019),  # ‘ ’
+    (0x201C, 0x201D),  # “ ”
+    (0x2026, 0x2026),  # …
+]
 
 
 def build(face, size):
@@ -31,9 +69,16 @@ def build(face, size):
     intervals = []
     index = 0
 
+    missing = []
+
     for first, last in INTERVALS:
         intervals.append((first, last, index))
         for cp in range(first, last + 1):
+            # A codepoint the face has no outline for silently loads .notdef,
+            # which bakes an empty box into the header and looks like a
+            # rendering bug on the panel months later. Say so instead.
+            if face.get_char_index(cp) == 0:
+                missing.append(cp)
             face.load_char(cp, freetype.FT_LOAD_RENDER | freetype.FT_LOAD_TARGET_NORMAL)
             g = face.glyph
             bm = g.bitmap
@@ -57,6 +102,12 @@ def build(face, size):
 
             glyphs.append((w, h, advance, g.bitmap_left, g.bitmap_top, offset))
             index += 1
+
+    if missing:
+        listed = " ".join(f"U+{cp:04X}" for cp in missing[:12])
+        more = f" (+{len(missing) - 12} more)" if len(missing) > 12 else ""
+        print(f"  WARNING: {len(missing)} codepoints absent from this face, "
+              f"baked as .notdef: {listed}{more}")
 
     metrics = (
         face.size.height >> 6,    # advance_y

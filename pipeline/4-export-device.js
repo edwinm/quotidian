@@ -1,10 +1,11 @@
 // Split the day-keyed dataset into one small file per calendar day, in a format
 // the firmware can read without a JSON parser.
 //
-// The full dataset is ~24 MB: too large for the ESP32's 16 MB flash, and larger
-// than its 8 MB of PSRAM, so it cannot live on the device in either form. Only
-// one day is ever needed at a time, so it is split into 366 files on the SD
-// card. Each is a few tens of kB and holds only the fields that get rendered.
+// Step 3 has already cut each day to its best 20 quotes, so this is a format
+// change rather than a reduction: 366 files, about 3 kB each, holding only the
+// fields that get rendered. Only one day is ever needed at a time. At that size
+// the whole set fits the stock internal-flash filesystem partition, which is
+// where it lives - `pio run -t uploadfs` writes this directory to the device.
 //
 // The format is tab-separated, one quote per line, because the device then
 // needs no parser at all: count the lines, seek to the one for this year, split
@@ -28,6 +29,11 @@ const FIELDS = [
 ];
 
 // Strips the framing characters. Used for every field.
+//
+// The text is written as UTF-8 and passed through unchanged - em dashes, curly
+// quotes and every accented name intact. ui.cpp decodes UTF-8, and the fonts
+// are generated to cover the codepoints this dataset actually uses rather than
+// the text being cut down to fit the fonts.
 function strip(value) {
   return String(value ?? '').replace(/[\t\r\n]+/g, ' ');
 }
