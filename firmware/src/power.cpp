@@ -27,6 +27,33 @@ void powerLogWakeReason() {
                   (int)((mask >> kRtcIntPin) & 1), (int)((mask >> kButtonPin) & 1));
 }
 
+WakeSource powerWakeSource() {
+    switch (esp_sleep_get_wakeup_cause()) {
+        case ESP_SLEEP_WAKEUP_TIMER:
+            return WakeSource::Timer;
+        case ESP_SLEEP_WAKEUP_EXT1: {
+            // Both pins can read low at once - the alarm fires while a finger is
+            // on the button. A person waiting for a response is the more useful
+            // reading, so the button wins.
+            uint64_t mask = esp_sleep_get_ext1_wakeup_status();
+            if (mask & (1ULL << kButtonPin)) return WakeSource::Button;
+            if (mask & (1ULL << kRtcIntPin)) return WakeSource::Alarm;
+            return WakeSource::Other;
+        }
+        default:
+            return WakeSource::Other;  // power-on, reset, brownout
+    }
+}
+
+const char *powerWakeSourceName(WakeSource source) {
+    switch (source) {
+        case WakeSource::Alarm:  return "RTC alarm";
+        case WakeSource::Timer:  return "backstop timer";
+        case WakeSource::Button: return "button";
+        default:                 return "power-on/reset";
+    }
+}
+
 // The SD card sits on VDD3V3, which is NOT switched by PWR_EN, so it stays
 // powered through deep sleep and cannot be turned off in software. What can be
 // controlled is how its lines are left.
@@ -58,7 +85,7 @@ static void shutdownRadios() {
     esp_bt_controller_disable();
 }
 
-[[noreturn]] void powerDown() {
+[[noreturn]] void powerDown(long backstopSeconds) {
     Serial.println("[power] powering down");
 
     // Drops the whole PWR_EN rail: e-paper supply and the blue LED7 with it.
@@ -80,6 +107,21 @@ static void shutdownRadios() {
         rtc_gpio_pulldown_dis(pin);
     }
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+    // Second wake source, independent of the RTC chip and the I2C bus that talks
+    // to it. Everything above depends on the PCF8563 having accepted its alarm:
+    // a NAKed write, a flat backup cell, a pulled INT line, and ext1 never
+    // fires. That failure is silent and total - the board simply never wakes
+    // again, and the only way back is the button.
+    //
+    // The ESP32's RC oscillator is minutes-per-day out, which rules it out for
+    // scheduling and is perfectly good for a net. Armed past the alarm, so it
+    // only ever fires when the alarm did not.
+    if (backstopSeconds > 0) {
+        esp_sleep_enable_timer_wakeup((uint64_t)backstopSeconds * 1000000ULL);
+        Serial.printf("[power] backstop timer armed for %ld s (%.1f h)\n",
+                      backstopSeconds, backstopSeconds / 3600.0);
+    }
 
     Serial.printf("[power] sleeping; wake pins RTC INT=%d button=%d\n",
                   digitalRead(kRtcIntPin), digitalRead(kButtonPin));

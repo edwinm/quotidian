@@ -56,6 +56,18 @@
 // on this board without resetting the chip.
 #define SHOW_CLOCK_DIAGNOSTICS 0
 
+// Draws two lines of power accounting at the foot of the quote screen: how many
+// times the board has woken and what woke it, then the battery now against the
+// battery when counting started, with the fall expressed in mV per day.
+//
+// This is the only way to measure a device that is asleep 99.99% of the time
+// and cannot be probed over USB without resetting it. Read it off the panel on
+// consecutive mornings: mV/day gives the average draw, and a non-zero `timer`
+// count means the RTC alarm is failing and the backstop is carrying it.
+//
+// On while the week-long battery drain is being chased. Turn it off afterwards.
+#define SHOW_POWER_DIAGNOSTICS 1
+
 // ---------------------------------------------------------------------------
 // Sleep schedule
 // ---------------------------------------------------------------------------

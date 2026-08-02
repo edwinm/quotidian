@@ -36,14 +36,16 @@ void rtcSetDailyAlarmUtc(int utcHour, int utcMinute);
 // Arms the alarm a number of minutes ahead of whatever the chip currently
 // reads. Used when the clock is not trustworthy: the absolute time may be
 // wrong, but the chip still counts, so a relative alarm still brings the board
-// back. Without this there would be no way back at all - the board is off, not
-// asleep, so no ESP32 timer is running.
+// back at the right interval - which the ESP32's own backstop timer, accurate to
+// minutes a day, cannot do.
 void rtcSetAlarmInMinutes(int minutes);
 
-// True if the chip's alarm flag is set, meaning the alarm is what switched the
-// board on. This is the ONLY way to tell: the board power-cycles rather than
-// waking, so esp_sleep_get_wakeup_cause() reports nothing and the reset reason
-// is POWERON for both an alarm and a hand-pressed reset.
+// True if the chip's alarm flag is set, meaning the alarm is what started this
+// cycle. This is the authoritative answer, and not the same question as
+// powerWakeSource(): that reports what pulled the ESP32 out of deep sleep, so a
+// backstop-timer wake or a button press still leaves this flag set if the alarm
+// had fired. A reset also loses the ESP32's wake cause entirely, while the flag
+// survives in the chip.
 //
 // Read it before rtcClearAlarm(), which is what resets the flag.
 bool rtcAlarmFired();

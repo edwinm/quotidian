@@ -86,9 +86,10 @@ stored on the device rather than in the repo.
 The clock syncs over NTP, and the display then shows a quote by someone born or
 died on today's date.
 
-It then switches off until 00:10 the next night, when the on-board real-time
-clock switches it back on to draw the new day. To move it to another network
-later, hold the user button down and tap reset.
+It then sleeps until 00:10 the next night, when the on-board real-time clock
+wakes it to draw the new day. A short press of the user button wakes it early
+and redraws. To move it to another network later, hold that button down and tap
+reset.
 
 ## Data sources
 

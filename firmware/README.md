@@ -52,14 +52,17 @@ iPhone, a captive portal is the only app-free option.
 device restarts into setup mode. Same procedure if you move house or change
 router.
 
-It has to be that gesture rather than a long press while running, because in
-normal operation the board is only awake for a few seconds a night — and it is
-*off* the rest of the time, not asleep, so pressing a button does nothing at
-all. Holding it across a reset is the one moment the firmware is guaranteed to
-look.
+A press wakes the board from sleep — S4 is an `ext1` wake source alongside the
+RTC alarm — but a *long* press has to be recognised by firmware that is already
+running, and in normal operation that is only a few seconds a night. Holding it
+across a reset is the one moment the firmware is guaranteed to look.
 
-A long press does still work whenever the board happens to be awake: during
-setup mode, or throughout when `DEEP_SLEEP_ENABLED` is 0.
+A short press is different: it wakes the board and redraws the current day,
+which is the quick way to refresh the screen without waiting for 00:10. Useful
+for reading the `SHOW_POWER_DIAGNOSTICS` lines on demand.
+
+A long press works whenever the board happens to be awake anyway: during setup
+mode, or throughout when `DEEP_SLEEP_ENABLED` is 0.
 
 If stored credentials stop working, the device falls back to setup mode on its
 own and the screen says which network it could not reach.
@@ -95,7 +98,7 @@ Improv has no channel for timezone data, so devices provisioned over USB keep
 | Battery indicator | [src/battery.cpp](src/battery.cpp) | ADC + eFuse Vref calibration |
 | Wi-Fi + NTP | [src/wireless.cpp](src/wireless.cpp) | Station mode, timezone-aware |
 | BLE | [src/wireless.cpp](src/wireless.cpp) | Standard Battery Service (0x180F) |
-| Nightly power-down | [src/power.cpp](src/power.cpp) | Board switches off; the RTC alarm switches it back on |
+| Nightly sleep | [src/power.cpp](src/power.cpp) | Deep sleep; woken by the RTC alarm, the button, or a backstop timer |
 
 ### Portrait orientation
 
@@ -189,31 +192,45 @@ this. To tell whether the board is running, watch whether the USB port
 disappears a few seconds after boot: gone means it reached deep sleep, which is
 what it should do.
 
-### The board switches off, it does not sleep
+### The board sleeps, it does not switch off
 
-`powerDown()` calls `esp_deep_sleep_start()`, but that is not what happens.
-Dropping the rail switches the board off completely, and the PCF8563 alarm
-switches it back on — it is wired as a power switch, running on its own backup
-cell in between.
+This was misdiagnosed once, at length, and the wrong model is worth recording
+because everything about the wake path follows from getting it right.
 
-The evidence: the reset reason is `POWERON`, never `DEEPSLEEP`;
-`esp_sleep_get_wakeup_cause()` reports nothing at all; and RTC memory does not
-survive, which is why the state that has to persist lives in NVS.
+The claim was that dropping the rail switches the board off completely, with
+the PCF8563 wired as a power switch. The evidence looked airtight: the reset
+reason was `POWERON` and never `DEEPSLEEP`, `esp_sleep_get_wakeup_cause()`
+reported nothing, and RTC memory did not survive.
 
-Three consequences, none of them obvious from reading the sleep API calls:
+Every one of those readings was an artifact of the measurement. Opening the
+serial port toggles `EN` over USB-JTAG, which resets the chip — so the monitor
+that was watching for the wake was itself causing the power-on it recorded.
 
-- **The RTC alarm is the only way back.** No GPIO wake — a chip with no power
-  cannot notice a button. No timer — nothing is running to count. Whether the
-  alarm was armed correctly is all that stands between a working display and a
-  dark one, which is why `rtcSetDailyAlarmUtc()` reads its registers back and
-  only reports `verified` once they hold what was written.
-- **An alarm start is indistinguishable from a reset** by reset reason alone.
-  `rtcAlarmFired()` reads the chip's alarm flag instead, before clearing it.
+What actually happens: the ESP32 runs from the always-on `VDD3V3` rail, an LDO
+from VBAT/USB. `epd_poweroff_all()` switches only the panel rail. The chip
+really does deep sleep, and the schematic confirms the RTC `INT` line goes to
+GPIO9 and nowhere else — there is no power latch.
+
+The consequences, which the wrong model got backwards:
+
+- **Wake is by GPIO, not by power-on.** `ext1` wakes on either pin going low:
+  the PCF8563 alarm on GPIO9, or the user button on GPIO21. The button works
+  from sleep — that is what makes it useful for forcing a redraw.
+- **A backstop timer is possible, and armed.** `powerDown(backstopSeconds)`
+  sets `esp_sleep_enable_timer_wakeup()` an hour past the alarm. The earlier
+  model said no timer could run, so none was armed, and a lost alarm meant the
+  board slept for ever with no way back but the button.
+- **An alarm start is still not the same question as a wake source.**
+  `esp_sleep_get_wakeup_cause()` says what pulled the chip out of sleep;
+  `rtcAlarmFired()` reads the chip's own flag and says whether the alarm fired
+  at all. They disagree exactly when it matters — a backstop wake, or a button
+  press on a night the alarm also fired.
 - **Between updates the board is unreachable**, including for flashing. Hold
   `IO0` and tap reset to get into the ROM bootloader.
 
-It is a better arrangement than deep sleep: off is properly off, rather than
-the ~380 µA the datasheet quotes for sleep.
+Sleep current is the open question, not the mechanism: a 2000 mAh cell lasted
+about a week, which is roughly 12 mA average against a design budget of
+0.4 mA. `SHOW_POWER_DIAGNOSTICS` exists to measure it.
 
 ### Battery — the ADC2 caveat
 

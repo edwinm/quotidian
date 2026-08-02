@@ -70,12 +70,51 @@ static String sPendingPassword;
 // Populated when a connection attempt fails, so the setup screen can say why.
 static String sSetupError;
 
-// Whether the PCF8563 alarm is what switched the board on, as opposed to a
-// hand-pressed reset. Read from the chip's alarm flag at boot, because the
-// board power-cycles rather than waking and the reset reason cannot tell them
-// apart. Reported again before powering down: the boot line is usually lost
-// while USB CDC enumerates.
+// Whether the PCF8563 alarm is what started this cycle, as opposed to a reset
+// or the button. Read from the chip's own alarm flag rather than from
+// powerWakeSource(), which reports what woke the ESP32: the two disagree in the
+// case that matters, where the alarm fired but the wake came from the backstop
+// timer or a finger. Reported again before powering down: the boot line is
+// usually lost while USB CDC enumerates.
 static bool sWokeByAlarm = false;
+
+// --- Wake accounting --------------------------------------------------------
+
+#if SHOW_POWER_DIAGNOSTICS
+// Counts this wake and maintains the drain baseline. See SHOW_POWER_DIAGNOSTICS
+// in config.h for what the numbers are for.
+static void recordWake(WakeSource source) {
+    WakeStats stats = settingsWakeStats();
+
+    // A battery found fuller than the baseline has been charged, which ends the
+    // run being measured. Counters and baseline restart together, so the wake
+    // count and the volts lost always describe the same stretch of time.
+    //
+    // Only ever on battery: running off USB must not wipe a run in progress,
+    // which is exactly what reading the numbers over USB would otherwise do.
+    const bool haveBaseline = stats.firstVolts > 0.0f;
+    const bool recharged = haveBaseline && sBattery.volts > stats.firstVolts + 0.15f;
+    if (sBattery.present && (!haveBaseline || recharged)) {
+        stats = {};
+        stats.firstVolts = sBattery.volts;
+        stats.firstEpoch = timeSynced() ? (int64_t)time(nullptr) : 0;
+    }
+
+    stats.total++;
+    switch (source) {
+        case WakeSource::Alarm:  stats.byAlarm++;  break;
+        case WakeSource::Timer:  stats.byTimer++;  break;
+        case WakeSource::Button: stats.byButton++; break;
+        default:                 stats.byOther++;  break;
+    }
+
+    settingsSaveWakeStats(stats);
+    Serial.printf("[power] wake %lu by %s (alarm %lu, timer %lu, button %lu, other %lu)\n",
+                  (unsigned long)stats.total, powerWakeSourceName(source),
+                  (unsigned long)stats.byAlarm, (unsigned long)stats.byTimer,
+                  (unsigned long)stats.byButton, (unsigned long)stats.byOther);
+}
+#endif
 
 // --- Quote screen -----------------------------------------------------------
 
@@ -155,6 +194,47 @@ static void drawQuote(int margin) {
     }
 }
 
+#if SHOW_POWER_DIAGNOSTICS
+// The two lines that answer "where did the battery go". `line` draws one row and
+// moves up; see drawFooter.
+template <typename LineFn>
+static void drawPowerDiagnostics(LineFn line) {
+    const WakeStats stats = settingsWakeStats();
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "wakes %lu   alarm %lu   timer %lu   btn %lu   other %lu",
+             (unsigned long)stats.total, (unsigned long)stats.byAlarm,
+             (unsigned long)stats.byTimer, (unsigned long)stats.byButton,
+             (unsigned long)stats.byOther);
+    line(String(buf));
+
+    if (!sBattery.present) {
+        line(String("running on USB - no drain to measure"));
+        return;
+    }
+
+    // Elapsed time comes from the clock rather than millis(), so it counts the
+    // sleep that makes up almost all of it. Under a few hours the rate is mostly
+    // ADC noise, so the raw reading stands alone until the run is long enough to
+    // divide by.
+    const int64_t now = timeSynced() ? (int64_t)time(nullptr) : 0;
+    const double days = (stats.firstEpoch && now > stats.firstEpoch)
+                            ? (now - stats.firstEpoch) / 86400.0
+                            : 0.0;
+
+    if (stats.firstVolts > 0.0f && days > 0.25) {
+        const double lost = stats.firstVolts - sBattery.volts;
+        snprintf(buf, sizeof(buf), "%.2f V %d%%   from %.2f V over %.1f d   %.0f mV/d",
+                 sBattery.volts, sBattery.percent, stats.firstVolts, days,
+                 lost * 1000.0 / days);
+    } else {
+        snprintf(buf, sizeof(buf), "%.2f V %d%%   baseline %.2f V",
+                 sBattery.volts, sBattery.percent, stats.firstVolts);
+    }
+    line(String(buf));
+}
+#endif
+
 // The foot of the page carries the credit the licence requires, and nothing
 // else - no Wi-Fi, SD or Bluetooth status. This is a thing to read, not a
 // dashboard, and it is going in a picture frame.
@@ -172,6 +252,18 @@ static void drawFooter(int margin) {
                    ink::kTextLight);
     }
 
+    // Diagnostic panels stack upwards from just above the credit, so either can
+    // be switched on alone or both together without them landing on each other.
+#if SHOW_CLOCK_DIAGNOSTICS || SHOW_POWER_DIAGNOSTICS
+    const int diagLead = 26;
+    int diagY = baseline - 30;
+    auto diagLine = [&](const String &text) {
+        uiDrawText(Font::Small, margin, diagY,
+                   uiEllipsize(Font::Small, text, bodyWidth).c_str(), ink::kTextLight);
+        diagY -= diagLead;
+    };
+#endif
+
 #if SHOW_CLOCK_DIAGNOSTICS
     // Temporary. Everything needed to tell whether the clock and the alarm
     // agree with the wall clock, read off the panel because serial cannot be
@@ -182,15 +274,13 @@ static void drawFooter(int margin) {
         snprintf(local, sizeof(local), "%02d-%02d %02d:%02d local",
                  lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
     }
-    uiDrawText(Font::Small, margin, baseline - 30,
-               uiEllipsize(Font::Small, rtcDiagnostics(), bodyWidth).c_str(),
-               ink::kTextLight);
-    uiDrawText(Font::Small, margin, baseline - 56,
-               uiEllipsize(Font::Small,
-                           String(local) + "  TZ " + settingsTimezone() +
-                           (sWokeByAlarm ? "  by ALARM" : "  by reset"),
-                           bodyWidth).c_str(),
-               ink::kTextLight);
+    diagLine(rtcDiagnostics());
+    diagLine(String(local) + "  TZ " + settingsTimezone() +
+             (sWokeByAlarm ? "  by ALARM" : "  by reset"));
+#endif
+
+#if SHOW_POWER_DIAGNOSTICS
+    drawPowerDiagnostics(diagLine);
 #endif
 
     if (!sBattery.present || sBattery.percent > LOW_BATTERY_PERCENT) return;
@@ -332,9 +422,9 @@ static void loadQuote() {
 
 // --- Sleep scheduling -------------------------------------------------------
 
-// Both of these used to live in RTC memory, which was wrong: the RTC alarm
-// power-cycles this board rather than waking it from deep sleep, so RTC memory
-// does not survive. They are in NVS now - see settings.h.
+// Both of these used to live in RTC memory, which was wrong: it is lost to the
+// power cuts, resets and reflashes this board sees in normal use, and losing it
+// is silent. They are in NVS now - see settings.h.
 
 static String todayKey() {
     int y, m, d;
@@ -365,9 +455,14 @@ static long secondsUntilNextWake() {
 // Arms both wake sources, then sleeps.
 //
 // The PCF8563 alarm is the accurate one and normally fires first. The ESP32's
-// own timer is set an hour later purely as a backstop: its RC oscillator is
+// own timer is armed this much later purely as a backstop: its RC oscillator is
 // minutes-per-day inaccurate, so it is no good for scheduling, but it does
 // guarantee the device still wakes if the alarm never arrives.
+//
+// The margin has to clear the RC oscillator's own error over a day, or the
+// backstop would race the alarm and take over a job it is far worse at.
+static constexpr long kBackstopMarginSeconds = TEST_WAKE_SECONDS ? 60 : 3600;
+
 // True once the cycle has finished and the device is deliberately staying up,
 // which only happens with DEEP_SLEEP_ENABLED == 0.
 static bool sStayingAwake = false;
@@ -392,11 +487,10 @@ static void sleepUntilNextWake() {
         if (endCycleAwake(SLEEP_RETRY_MINUTES * 60L)) return;
 
         // The absolute time is not trustworthy, but the chip still counts, so a
-        // relative alarm still brings the board back. There is no timer to fall
-        // back on.
+        // relative alarm still brings the board back.
         Serial.printf("[power] clock unknown, retrying in %d min\n", SLEEP_RETRY_MINUTES);
         rtcSetAlarmInMinutes(SLEEP_RETRY_MINUTES);
-        powerDown();
+        powerDown(SLEEP_RETRY_MINUTES * 60L + kBackstopMarginSeconds);
     }
 
     long seconds = secondsUntilNextWake();
@@ -412,7 +506,7 @@ static void sleepUntilNextWake() {
                   sWokeByAlarm ? "RTC alarm" : "power-on/reset",
                   seconds, seconds / 3600.0);
 
-    powerDown();
+    powerDown(seconds + kBackstopMarginSeconds);
 }
 
 // Woke before the date rolled over - too early, or the alarm shifted an hour
@@ -647,6 +741,12 @@ void setup() {
     sBattery = batteryRead();
     Serial.printf("[battery] %.2f V (%d%%)%s\n", sBattery.volts, sBattery.percent,
                   sBattery.present ? "" : " - no battery, running off USB");
+
+#if SHOW_POWER_DIAGNOSTICS
+    // After the battery read, which needs the radios off, and after the clock is
+    // up, so the baseline can be stamped with a real time.
+    recordWake(powerWakeSource());
+#endif
 
     if (buttonHeldAtBoot()) {
         Serial.println("[button] held at startup - clearing Wi-Fi credentials");

@@ -14,6 +14,7 @@ static const char *kKeyTz     = "tz";
 static const char *kKeyTzName = "tzname";
 static const char *kKeySyncDays = "syncdays";
 static const char *kKeyLastDay  = "lastday";
+static const char *kKeyWake     = "wakestats";
 
 void settingsBegin() {
     sPrefs.begin(kNamespace, false);
@@ -70,6 +71,22 @@ String settingsLastRendered() {
 
 void settingsSetLastRendered(const String &day) {
     sPrefs.putString(kKeyLastDay, day);
+}
+
+WakeStats settingsWakeStats() {
+    WakeStats stats = {};
+    // A size mismatch means the struct changed since the blob was written. Zeros
+    // are the right answer then: a clean restart of the count beats decoding an
+    // old layout into fields that no longer line up.
+    if (sPrefs.getBytesLength(kKeyWake) == sizeof(stats)) {
+        sPrefs.getBytes(kKeyWake, &stats, sizeof(stats));
+    }
+    return stats;
+}
+
+void settingsSaveWakeStats(const WakeStats &stats) {
+    // One blob, so a wake costs one write however many counters move.
+    sPrefs.putBytes(kKeyWake, &stats, sizeof(stats));
 }
 
 void settingsClear() {
