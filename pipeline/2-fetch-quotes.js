@@ -6,7 +6,7 @@
 // Both conditions must hold. This is deliberately strict: we drop uncertain quotes.
 
 import { readFile, writeFile } from 'node:fs/promises';
-import { fetchJson, pool, LICENSE, LICENSE_URL } from './common.js';
+import { fetchJson, pool, looksEnglish, isSupportedScript, LICENSE, LICENSE_URL } from './common.js';
 
 const API = 'https://en.wikiquote.org/w/api.php';
 const MAX_QUOTES_PER_PERSON = 8;
@@ -15,21 +15,6 @@ const MAX_LEN = 220;
 
 // A section heading (any level) containing one of these words is NOT trusted.
 const BLOCKED_HEADING = /(misattribut|disputed|attributed|unsourced|about|external|see also|references|further reading|bibliograph|works|notes|quotes about|posthumous attribut)/i;
-
-// Common English function words — used to detect (and keep) English quotes.
-const EN_STOPWORDS = new Set(
-  ('the and of to a is in that it was for as with his be not this but are or my you i he she we they ' +
-    'have has had will would can could should do does did at by from an their our your who what when ' +
-    'which there here all no so if then than them me him her us')
-    .split(' '),
-);
-
-function looksEnglish(text) {
-  const words = text.toLowerCase().match(/[a-z']+/g) || [];
-  if (words.length < 4) return true; // too short to judge; length filter handles junk
-  const hits = words.filter((w) => EN_STOPWORDS.has(w)).length;
-  return words.length > 8 ? hits >= 2 : hits >= 1;
-}
 
 function cleanWikitext(s) {
   return s
@@ -124,8 +109,11 @@ function extractQuotes(wikitext) {
       if (/[[\]]/.test(text)) continue;
       // Require it to read like a sentence: has a space and some lowercase.
       if (!/\s/.test(text) || !/[a-z]/.test(text)) continue;
-      // English-only.
+      // English-only, and written in a script the fonts have outlines for.
+      // The text is otherwise left exactly as it is: the device renders UTF-8
+      // and its fonts are built to match this corpus, not the reverse.
       if (!looksEnglish(text)) continue;
+      if (!isSupportedScript(text)) continue;
       // Enrich thin citations ("p. 12") with the nearest work title.
       if (currentWork && (source.length < 10 || /^(pp?\.?|pages?|ch\.?|chapter|no\.?|vol|st\.|line)/i.test(source))) {
         source = `${currentWork}, ${source}`;

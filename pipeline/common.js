@@ -49,6 +49,75 @@ export async function pool(items, worker, { concurrency = 4, onProgress } = {}) 
   return results;
 }
 
+// --- Language ----------------------------------------------------------------
+
+// Combining marks left by an NFD decomposition. Used only to tokenise for the
+// language test - the text itself is never altered. The device is fed UTF-8
+// exactly as Wikiquote wrote it, and the fonts are generated to cover it; see
+// firmware/tools/fontconvert.py.
+const COMBINING = /[\u0300-\u036f]/g;
+
+// Function words dense enough in real English prose to identify it. Counting
+// these beats looking for foreign markers, because the obvious foreign words
+// are ambiguous: "die", "per", "con" and "non" are all English too.
+const EN_STOPWORDS = new Set(
+  ('the and of to a is in that it was for as with his be not this but are or my you i he she we they ' +
+   'have has had will would can could should do does did at by from an their our your who what when which ' +
+   'there here all no so if then than them me him her us its into out up down over about after before more ' +
+   'most such only own same too very one two other some any each because while these those been being were am')
+    .split(' '),
+);
+
+// The earlier version asked for two stopword hits anywhere in the quote, which
+// Spanish clears without trying - "a", "no", "he" and "me" are all Spanish
+// words too. Cervantes' "Y asi, del poco dormir y del mucho leer..." passed it
+// and reached the device.
+//
+// Density is the fix. Real English runs 33-50% function words; the foreign text
+// in this corpus runs 7-14%, so 20% separates them with room on both sides.
+// Short quotes are exempt: "Genius is eternal patience" is a quarter stopwords
+// by accident, and there is not enough text to judge.
+//
+// Diacritics are folded before tokenising, so that a word is bounded where it
+// really ends. Without it "Duyen hoi ngo" written with its tone marks splits
+// into the fragments between the accented letters, which measures nothing.
+export function looksEnglish(text) {
+  const folded = String(text ?? '').normalize('NFD').replace(COMBINING, '');
+  const words = folded.toLowerCase().match(/[a-z']+/g) || [];
+  if (words.length < 6) return true;
+  const hits = words.filter((w) => EN_STOPWORDS.has(w)).length;
+  return hits / words.length >= 0.2;
+}
+
+// --- Script coverage ---------------------------------------------------------
+
+// The Unicode blocks the device fonts are generated from. Not a Latin-1 limit
+// and not a substitution: text is shipped as UTF-8 exactly as written, and
+// firmware/tools/charset.mjs derives the glyphs to build from the data itself.
+//
+// The boundary is the font family rather than the encoding. Cabin is a Latin
+// face; it has outlines for these blocks and nothing for Japanese, so a CJK
+// codepoint would come out of freetype as an empty box whatever intervals were
+// requested. Rendering that honestly needs a second font and a fallback path in
+// ui.cpp, which is a lot of machinery for the one quote in 7320 that needs it
+// (Basho's haiku, which carries its own romaji transliteration anyway).
+const SUPPORTED_BLOCKS = [
+  [0x0020, 0x007e], // ASCII
+  [0x00a0, 0x00ff], // Latin-1 Supplement
+  [0x0100, 0x024f], // Latin Extended-A and Extended-B
+  [0x02b0, 0x02ff], // Spacing modifier letters - the modifier apostrophe
+  [0x1e00, 0x1eff], // Latin Extended Additional - Vietnamese
+  [0x2000, 0x206f], // General Punctuation - dashes, curly quotes, ellipsis
+];
+
+export function isSupportedScript(text) {
+  for (const ch of String(text ?? '')) {
+    const cp = ch.codePointAt(0);
+    if (!SUPPORTED_BLOCKS.some(([a, b]) => cp >= a && cp <= b)) return false;
+  }
+  return true;
+}
+
 // "1596-03-31" -> "MM-DD" key, plus formatted "31 March 1596".
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
