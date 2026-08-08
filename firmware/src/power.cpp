@@ -16,28 +16,110 @@
 static constexpr gpio_num_t kRtcIntPin = GPIO_NUM_9;
 static constexpr gpio_num_t kButtonPin = (gpio_num_t)BUTTON_1;
 
+// How this cycle started, captured once and reused.
+//
+// Read on first use rather than at each call site. powerDown() re-arms ext1
+// before sleeping, and reading the wake status after that would report the
+// configuration rather than the event - a footgun for anything that wants to
+// display the reason late in the cycle, which drawPowerDiagnostics does.
+namespace {
+struct WakeState {
+    esp_reset_reason_t reset;
+    esp_sleep_wakeup_cause_t cause;
+    uint64_t mask;
+};
+}  // namespace
+
+static WakeState sWake;
+static bool sWakeCaptured = false;
+
+static const WakeState &wakeState() {
+    if (!sWakeCaptured) {
+        sWake.reset = esp_reset_reason();
+        sWake.cause = esp_sleep_get_wakeup_cause();
+        sWake.mask = esp_sleep_get_ext1_wakeup_status();
+        sWakeCaptured = true;
+    }
+    return sWake;
+}
+
+static const char *resetReasonName(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_POWERON:   return "POWERON";
+        case ESP_RST_EXT:       return "EXT";
+        case ESP_RST_SW:        return "SW";
+        case ESP_RST_PANIC:     return "PANIC";
+        case ESP_RST_INT_WDT:   return "INT_WDT";
+        case ESP_RST_TASK_WDT:  return "TASK_WDT";
+        case ESP_RST_WDT:       return "WDT";
+        case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+        case ESP_RST_BROWNOUT:  return "BROWNOUT";
+        case ESP_RST_SDIO:      return "SDIO";
+        default:                return "UNKNOWN";
+    }
+}
+
+static const char *wakeCauseName(esp_sleep_wakeup_cause_t cause) {
+    switch (cause) {
+        case ESP_SLEEP_WAKEUP_EXT0:      return "EXT0";
+        case ESP_SLEEP_WAKEUP_EXT1:      return "EXT1";
+        case ESP_SLEEP_WAKEUP_TIMER:     return "TIMER";
+        case ESP_SLEEP_WAKEUP_TOUCHPAD:  return "TOUCH";
+        case ESP_SLEEP_WAKEUP_ULP:       return "ULP";
+        case ESP_SLEEP_WAKEUP_GPIO:      return "GPIO";
+        case ESP_SLEEP_WAKEUP_UART:      return "UART";
+        case ESP_SLEEP_WAKEUP_UNDEFINED: return "NONE";
+        default:                         return "?";
+    }
+}
+
 void powerLogWakeReason() {
-    // reset reason: 1 POWERON, 3 SW, 5 INT_WDT, 8 DEEPSLEEP, 9 BROWNOUT.
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    uint64_t mask = esp_sleep_get_ext1_wakeup_status();
-    Serial.printf("[power] reset reason=%d, wakeup cause=%d, ext1 mask=0x%llX "
+    const WakeState &w = wakeState();
+    Serial.printf("[power] reset reason=%d %s, wakeup cause=%d %s, ext1 mask=0x%llX "
                   "(RTC INT=%d button=%d)\n",
-                  (int)esp_reset_reason(), (int)cause, mask,
-                  (int)((mask >> kRtcIntPin) & 1), (int)((mask >> kButtonPin) & 1));
+                  (int)w.reset, resetReasonName(w.reset),
+                  (int)w.cause, wakeCauseName(w.cause), w.mask,
+                  (int)((w.mask >> kRtcIntPin) & 1), (int)((w.mask >> kButtonPin) & 1));
+}
+
+// The same thing in one short line, for the panel. Serial cannot be opened on
+// this board without resetting the chip, which destroys the very evidence being
+// read, so the only place these numbers can be seen is the display.
+//
+// What to look for:
+//   rst 8 DEEPSLEEP, wake 3 EXT1   the alarm woke the chip from deep sleep
+//   rst 8 DEEPSLEEP, wake 4 TIMER  the alarm was missed, the backstop caught it
+//   rst 1 POWERON,   wake 0 NONE   not a wake at all - the board was started
+//   rst 9 BROWNOUT                 the supply dipped, despite the detector
+//
+// The third of those, arriving punctually every night, would mean the alarm is
+// switching the board on rather than waking it.
+String powerWakeReport() {
+    const WakeState &w = wakeState();
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "rst %d %s  wake %d %s 0x%llX",
+             (int)w.reset, resetReasonName(w.reset),
+             (int)w.cause, wakeCauseName(w.cause), (unsigned long long)w.mask);
+    return String(buf);
 }
 
 WakeSource powerWakeSource() {
-    switch (esp_sleep_get_wakeup_cause()) {
+    switch (wakeState().cause) {
         case ESP_SLEEP_WAKEUP_TIMER:
             return WakeSource::Timer;
         case ESP_SLEEP_WAKEUP_EXT1: {
             // Both pins can read low at once - the alarm fires while a finger is
             // on the button. A person waiting for a response is the more useful
             // reading, so the button wins.
-            uint64_t mask = esp_sleep_get_ext1_wakeup_status();
+            const uint64_t mask = wakeState().mask;
             if (mask & (1ULL << kButtonPin)) return WakeSource::Button;
             if (mask & (1ULL << kRtcIntPin)) return WakeSource::Alarm;
-            return WakeSource::Other;
+            // An ext1 wake with an empty mask. Counted apart from a plain reset
+            // rather than lumped in, because "the alarm never fires" and "the
+            // alarm fires but does not say which pin" need different fixes and
+            // the counters were what made them indistinguishable.
+            return WakeSource::Ext1NoMask;
         }
         default:
             return WakeSource::Other;  // power-on, reset, brownout
@@ -46,10 +128,11 @@ WakeSource powerWakeSource() {
 
 const char *powerWakeSourceName(WakeSource source) {
     switch (source) {
-        case WakeSource::Alarm:  return "RTC alarm";
-        case WakeSource::Timer:  return "backstop timer";
-        case WakeSource::Button: return "button";
-        default:                 return "power-on/reset";
+        case WakeSource::Alarm:      return "RTC alarm";
+        case WakeSource::Timer:      return "backstop timer";
+        case WakeSource::Button:     return "button";
+        case WakeSource::Ext1NoMask: return "ext1, no pin reported";
+        default:                     return "power-on/reset";
     }
 }
 

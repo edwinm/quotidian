@@ -105,14 +105,17 @@ static void recordWake(WakeSource source) {
         case WakeSource::Alarm:  stats.byAlarm++;  break;
         case WakeSource::Timer:  stats.byTimer++;  break;
         case WakeSource::Button: stats.byButton++; break;
+        case WakeSource::Ext1NoMask: stats.byNoMask++; break;
         default:                 stats.byOther++;  break;
     }
 
     settingsSaveWakeStats(stats);
-    Serial.printf("[power] wake %lu by %s (alarm %lu, timer %lu, button %lu, other %lu)\n",
+    Serial.printf("[power] wake %lu by %s (alarm %lu, timer %lu, button %lu, "
+                  "nomask %lu, other %lu)\n",
                   (unsigned long)stats.total, powerWakeSourceName(source),
                   (unsigned long)stats.byAlarm, (unsigned long)stats.byTimer,
-                  (unsigned long)stats.byButton, (unsigned long)stats.byOther);
+                  (unsigned long)stats.byButton, (unsigned long)stats.byNoMask,
+                  (unsigned long)stats.byOther);
 }
 #endif
 
@@ -201,10 +204,19 @@ template <typename LineFn>
 static void drawPowerDiagnostics(LineFn line) {
     const WakeStats stats = settingsWakeStats();
 
+    // What started THIS cycle, in raw form. The counters below say what has been
+    // happening; this says what just happened, and is the line that separates a
+    // board that wakes from one that is switched on.
+    line(powerWakeReport());
+
+    // The running total is dropped rather than the new counter: it is the sum of
+    // the five buckets, and the line has to stay inside the width that fits at
+    // the wide margin - 43 characters, which this is exactly.
     char buf[128];
-    snprintf(buf, sizeof(buf), "wakes %lu   alarm %lu   timer %lu   btn %lu   other %lu",
-             (unsigned long)stats.total, (unsigned long)stats.byAlarm,
-             (unsigned long)stats.byTimer, (unsigned long)stats.byButton,
+    snprintf(buf, sizeof(buf),
+             "alarm %lu  timer %lu  btn %lu  nomask %lu  other %lu",
+             (unsigned long)stats.byAlarm, (unsigned long)stats.byTimer,
+             (unsigned long)stats.byButton, (unsigned long)stats.byNoMask,
              (unsigned long)stats.byOther);
     line(String(buf));
 

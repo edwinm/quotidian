@@ -56,6 +56,7 @@ struct WakeStats {
     uint32_t byAlarm;
     uint32_t byTimer;
     uint32_t byButton;
+    uint32_t byNoMask;    // woke on ext1 but reported no pin
     uint32_t byOther;     // power-on, reset, brownout
     float    firstVolts;  // battery when this baseline started, 0 if unset
     int64_t  firstEpoch;  // UTC seconds at that moment, 0 if the clock was unknown

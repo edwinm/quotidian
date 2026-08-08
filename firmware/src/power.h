@@ -7,9 +7,17 @@ void powerLogWakeReason();
 
 // Which source ended the last deep sleep. A Timer wake is a failure signal: it
 // means the RTC alarm did not arrive and the backstop had to recover the board.
-enum class WakeSource : uint8_t { Other = 0, Alarm, Timer, Button };
+// Ext1NoMask means the chip woke on ext1 but reported no pin, which would make
+// a working alarm look like no alarm at all.
+enum class WakeSource : uint8_t { Other = 0, Alarm, Timer, Button, Ext1NoMask };
 WakeSource powerWakeSource();
 const char *powerWakeSourceName(WakeSource source);
+
+// Reset reason, wake cause and ext1 mask as one short line for the panel.
+// Serial cannot be opened on this board without resetting it, so this is the
+// only way to see what actually started a cycle. See the notes on the
+// definition for how to read it.
+String powerWakeReport();
 
 // Ends the cycle in deep sleep. Does not return.
 //
