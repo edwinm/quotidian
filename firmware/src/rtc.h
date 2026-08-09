@@ -5,7 +5,7 @@
 
 // PCF8563 hardware clock (U8 on the board, I2C 0x51).
 //
-// This is what makes deep sleep viable. The ESP32's own RTC runs off an
+// This is what makes the nightly schedule viable. The ESP32's own RTC runs off an
 // internal RC oscillator - measured at -3.9% against the crystal, and varying
 // by ~0.2% between boots at constant temperature, so minutes per day. The
 // PCF8563 has its own 32.768 kHz crystal (Y1, FC-135) and drifts seconds per
@@ -29,23 +29,23 @@ bool rtcApplyToSystemClock();
 // Writes the current system time back to the chip. Call after an NTP sync.
 void rtcStoreSystemClock();
 
-// Arms a daily alarm at the given UTC hour and minute. The INT pin (GPIO9)
-// goes low when it fires, which is what wakes the ESP32 from deep sleep.
+// Arms a daily alarm at the given UTC hour and minute. Its INT pin going low is
+// what brings the board back on, so this is the single point of failure for the
+// whole nightly cycle - hence the read-back verification in the implementation.
 void rtcSetDailyAlarmUtc(int utcHour, int utcMinute);
 
 // Arms the alarm a number of minutes ahead of whatever the chip currently
 // reads. Used when the clock is not trustworthy: the absolute time may be
 // wrong, but the chip still counts, so a relative alarm still brings the board
-// back at the right interval - which the ESP32's own backstop timer, accurate to
-// minutes a day, cannot do.
+// back. Without this there would be no way back at all - the board is off, not
+// asleep, so no ESP32 timer is running.
 void rtcSetAlarmInMinutes(int minutes);
 
 // True if the chip's alarm flag is set, meaning the alarm is what started this
-// cycle. This is the authoritative answer, and not the same question as
-// powerWakeSource(): that reports what pulled the ESP32 out of deep sleep, so a
-// backstop-timer wake or a button press still leaves this flag set if the alarm
-// had fired. A reset also loses the ESP32's wake cause entirely, while the flag
-// survives in the chip.
+// cycle. This is the ONLY way to tell: the board is switched off between
+// updates rather than asleep, so esp_sleep_get_wakeup_cause() reports nothing
+// and the reset reason is POWERON for both an alarm start and a hand-pressed
+// reset. The flag survives in the RTC chip, which has its own backup cell.
 //
 // Read it before rtcClearAlarm(), which is what resets the flag.
 bool rtcAlarmFired();

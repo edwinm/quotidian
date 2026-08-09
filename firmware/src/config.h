@@ -61,10 +61,18 @@
 // times the board has woken and what woke it, then the battery now against the
 // battery when counting started, with the fall expressed in mV per day.
 //
-// This is the only way to measure a device that is asleep 99.99% of the time
-// and cannot be probed over USB without resetting it. Read it off the panel on
-// consecutive mornings: mV/day gives the average draw, and a non-zero `timer`
-// count means the RTC alarm is failing and the backstop is carrying it.
+// This is the only way to measure a device that is powered down 99.99% of the
+// time and cannot be probed over USB without resetting it. Read it off the
+// panel on consecutive mornings: mV/day gives the average draw.
+//
+// The `rst`/`wake` line is what proved the board is switched off between
+// updates rather than asleep. `alarm`, `timer` and `nomask` are expected to
+// stay at zero for that reason - see powerDown() in power.h - and `other`
+// counts every start.
+//
+// mV/day only appears once a baseline has been taken, and no baseline is taken
+// from a reading at charging voltage: on USB the divider sees the charger, not
+// the cell, and a baseline latched there reports a drain that never happened.
 //
 // On while the week-long battery drain is being chased. Turn it off afterwards.
 #define SHOW_POWER_DIAGNOSTICS 1
@@ -75,8 +83,8 @@
 
 // Development switch.
 //
-//   1 - normal: wake nightly, draw, deep sleep. Weeks of battery life, but USB
-//       disappears with the chip, so reflashing needs a button press first.
+//   1 - normal: start nightly, draw, power down. Long battery life, but USB
+//       disappears with the board, so reflashing needs a button press first.
 //   0 - stay awake after the update. USB stays enumerated, so you can reflash
 //       whenever you like. Costs roughly 100 mA - fine on USB, hopeless on a
 //       battery.
@@ -92,9 +100,9 @@
 // Shortens the wake cycle to this many seconds so the sleep and wake path can
 // be exercised without waiting for midnight. 0 uses the real nightly schedule.
 //
-// Keep it short in both directions: the backstop timer is what recovers the
-// board if the alarm fails, and a long one locks you out of USB until it
-// expires. That happened during development with a 62-minute backstop.
+// Keep it short: the RTC alarm is the only thing that brings the board back, so
+// a long interval locks you out of USB until it expires. That happened during
+// development with a 62-minute setting.
 #define TEST_WAKE_SECONDS 0
 
 #if TEST_WAKE_SECONDS
@@ -121,7 +129,8 @@
 #define SLEEP_RETRY_MINUTES 15
 
 // Setup mode has to stay awake to serve the portal, which is ruinous on
-// battery. If nobody completes provisioning within this window, sleep and try
-// again at the next alarm. The button wakes it straight back into setup.
+// battery. If nobody completes provisioning within this window, power down and
+// try again at the next alarm - the board cannot be woken back into setup by
+// hand, so the alarm is what brings it round.
 #define SETUP_TIMEOUT_MS (15UL * 60UL * 1000UL)
 

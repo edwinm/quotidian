@@ -52,17 +52,20 @@ iPhone, a captive portal is the only app-free option.
 device restarts into setup mode. Same procedure if you move house or change
 router.
 
-A press wakes the board from sleep — S4 is an `ext1` wake source alongside the
-RTC alarm — but a *long* press has to be recognised by firmware that is already
-running, and in normal operation that is only a few seconds a night. Holding it
-across a reset is the one moment the firmware is guaranteed to look.
+It has to be that gesture rather than a press while running, because in normal
+operation the board is only powered for a few seconds a night — and it is *off*
+the rest of the time, not asleep, so pressing a button does nothing at all. The
+board has no power to notice it with. Holding it across a reset is the one
+moment the firmware is guaranteed to look.
 
-A short press is different: it wakes the board and redraws the current day,
-which is the quick way to refresh the screen without waiting for 00:10. Useful
-for reading the `SHOW_POWER_DIAGNOSTICS` lines on demand.
+S4 is configured as an `ext1` wake source in `powerDown()`, which reads as
+though a press should wake the device. It does not: see the section on the
+power model below.
 
-A long press works whenever the board happens to be awake anyway: during setup
-mode, or throughout when `DEEP_SLEEP_ENABLED` is 0.
+Presses do work whenever the board happens to be running anyway — during setup
+mode, or throughout when `DEEP_SLEEP_ENABLED` is 0. A short press redraws the
+current day, which is the quick way to refresh the `SHOW_POWER_DIAGNOSTICS`
+lines while developing.
 
 If stored credentials stop working, the device falls back to setup mode on its
 own and the screen says which network it could not reach.
@@ -98,7 +101,7 @@ Improv has no channel for timezone data, so devices provisioned over USB keep
 | Battery indicator | [src/battery.cpp](src/battery.cpp) | ADC + eFuse Vref calibration |
 | Wi-Fi + NTP | [src/wireless.cpp](src/wireless.cpp) | Station mode, timezone-aware |
 | BLE | [src/wireless.cpp](src/wireless.cpp) | Standard Battery Service (0x180F) |
-| Nightly sleep | [src/power.cpp](src/power.cpp) | Deep sleep; woken by the RTC alarm, the button, or a backstop timer |
+| Nightly power-down | [src/power.cpp](src/power.cpp) | The rail drops; the RTC alarm switches it back on |
 
 ### Portrait orientation
 
@@ -250,50 +253,69 @@ the application. Holding BOOT during the replug does the opposite — it is how
 you deliberately enter download mode to flash in the first place.
 
 Do not open the serial port to check. On this board that resets the chip, often
-straight back into download mode; `SHOW_CLOCK_DIAGNOSTICS` exists because of
-this. To tell whether the board is running, watch whether the USB port
-disappears a few seconds after boot: gone means it reached deep sleep, which is
-what it should do.
+straight back into download mode; the on-panel diagnostics exist because of
+this.
 
-### The board sleeps, it does not switch off
+Watching whether the USB port disappears tells you the application ran and
+ended its cycle, and nothing more. It does **not** tell you the chip went to
+sleep: USB CDC vanishes just the same when the board switches off. Reading more
+than that into it is how the sleep model came to be documented backwards for a
+while — see below.
 
-This was misdiagnosed once, at length, and the wrong model is worth recording
-because everything about the wake path follows from getting it right.
+### The board switches off, it does not sleep
 
-The claim was that dropping the rail switches the board off completely, with
-the PCF8563 wired as a power switch. The evidence looked airtight: the reset
-reason was `POWERON` and never `DEEPSLEEP`, `esp_sleep_get_wakeup_cause()`
-reported nothing, and RTC memory did not survive.
+This has now been diagnosed twice, wrongly the second time, so both the answer
+and the way the evidence misled are worth keeping.
 
-Every one of those readings was an artifact of the measurement. Opening the
-serial port toggles `EN` over USB-JTAG, which resets the chip — so the monitor
-that was watching for the wake was itself causing the power-on it recorded.
+`powerDown()` calls `esp_deep_sleep_start()`, but that is not what happens.
+The rail drops and the PCF8563 alarm brings it back: the board is switched off
+in between, not asleep.
 
-What actually happens: the ESP32 runs from the always-on `VDD3V3` rail, an LDO
-from VBAT/USB. `epd_poweroff_all()` switches only the panel rail. The chip
-really does deep sleep, and the schematic confirms the RTC `INT` line goes to
-GPIO9 and nowhere else — there is no power latch.
+Measured on the panel, on the boot the alarm itself caused, with nothing
+attached and nobody touching it:
 
-The consequences, which the wrong model got backwards:
+```
+rst 1 POWERON  wake 0 NONE 0x0
+alarm 0  timer 0  btn 0  nomask 0  other 3
+```
 
-- **Wake is by GPIO, not by power-on.** `ext1` wakes on either pin going low:
-  the PCF8563 alarm on GPIO9, or the user button on GPIO21. The button works
-  from sleep — that is what makes it useful for forcing a redraw.
-- **A backstop timer is possible, and armed.** `powerDown(backstopSeconds)`
-  sets `esp_sleep_enable_timer_wakeup()` an hour past the alarm. The earlier
-  model said no timer could run, so none was armed, and a lost alarm meant the
-  board slept for ever with no way back but the button.
-- **An alarm start is still not the same question as a wake source.**
-  `esp_sleep_get_wakeup_cause()` says what pulled the chip out of sleep;
-  `rtcAlarmFired()` reads the chip's own flag and says whether the alarm fired
-  at all. They disagree exactly when it matters — a backstop wake, or a button
-  press on a night the alarm also fired.
+`ESP_RST_POWERON` means the supply cycled — not an external reset
+(`ESP_RST_EXT`), not a brownout (`ESP_RST_BROWNOUT`). `wake 0 NONE` with an
+empty ext1 mask means the chip did not resume from sleep at all. RTC memory
+does not survive either, which is why persistent state lives in NVS.
+
+**How the second diagnosis went wrong.** Those same readings were once
+dismissed as artifacts of the serial monitor toggling `EN` over USB-JTAG,
+and the board was declared to deep sleep after all. The evidence for that was
+a port-presence test: USB vanished for 126 s and came back. It proves nothing.
+**USB CDC disappears identically whether the chip deep sleeps or the board
+powers off**, so the test could never separate the two — and it was written up
+as though it had. The `SHOW_POWER_DIAGNOSTICS` line above is what finally
+distinguished them, because it reports the reset reason instead of inferring it.
+
+The consequences:
+
+- **The RTC alarm is the only way back.** No GPIO wake — a board with no power
+  cannot notice a button. No timer — nothing is running to count. Everything
+  rests on the alarm having been armed correctly, which is why
+  `rtcSetDailyAlarmUtc()` reads its registers back and only reports `verified`
+  once they hold what was written. That read-back is the safety net; there is
+  no second one.
+- **`esp_sleep_enable_timer_wakeup()` is useless here** and is not called. It
+  was added as a backstop while the deep-sleep model was believed, and would
+  have sat in the code reading as protection that cannot fire.
+- **An alarm start is indistinguishable from a reset** by reset reason alone,
+  so `rtcAlarmFired()` reads the chip's own alarm flag instead, before clearing
+  it. `powerWakeSource()` can only ever return `Other`; its `Alarm`, `Timer`
+  and `Button` cases exist to prove that, and their counters staying at zero is
+  the expected result rather than a fault.
 - **Between updates the board is unreachable**, including for flashing. Hold
   `IO0` and tap reset to get into the ROM bootloader.
 
-Sleep current is the open question, not the mechanism: a 2000 mAh cell lasted
-about a week, which is roughly 12 mA average against a design budget of
-0.4 mA. `SHOW_POWER_DIAGNOSTICS` exists to measure it.
+Being properly off should mean a standby current near zero, which makes the
+week-long battery death that started this investigation a load on the always-on
+side rather than a sleep-current problem. The microSD card was exactly that,
+and it has been removed; see the storage section.
 
 ### Battery — the ADC2 caveat
 

@@ -26,9 +26,9 @@ void settingsSaveTimezone(const String &posix, const String &ianaName);
 
 // State that has to survive between updates.
 //
-// This lives in NVS rather than RTC memory. RTC_DATA_ATTR would survive an
-// ordinary deep-sleep wake, but not the power cuts, resets and reflashes this
-// board sees in normal use, and losing the counter silently is expensive: the
+// This lives in NVS rather than RTC memory. RTC_DATA_ATTR would be the obvious
+// choice for deep sleep, but this board does not deep sleep: the RTC alarm
+// power-cycles it, so the reset reason is POWERON and RTC memory is gone. The
 // give-away was `NTP sync due (9999 days since last)` on every single boot -
 // 9999 being the initial value of the counter.
 //
@@ -45,8 +45,10 @@ void   settingsSetLastRendered(const String &day);
 // cannot be answered from a display showing yesterday's quote - how often the
 // board really woke, and how fast the battery actually fell.
 //
-// `byTimer` is the important one. It counts wakes the RTC alarm failed to
-// deliver, which the backstop had to cover; on a healthy device it stays 0.
+// On this board every start lands in `byOther`: it is switched off between
+// updates, not asleep, so the ESP32 reports no wake source at all. The other
+// counters are kept because they are the check on that - if any of them moves,
+// the board is behaving differently from what powerDown() documents.
 //
 // The baseline (firstVolts/firstEpoch) is what turns the counters into a rate.
 // It re-arms by itself when the battery is found charged, since a drain

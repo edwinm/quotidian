@@ -11,8 +11,10 @@
 #include "epd_driver.h"
 #include "utilities.h"
 
-// PCF8563 alarm INT (active low, 10k pull-up) and the front button, both on
-// RTC-capable pins so they can wake deep sleep.
+// PCF8563 alarm INT (active low, 10k pull-up) and the front button. Both are
+// RTC-capable pins, and both are configured as ext1 wake sources in
+// powerDown() - which turns out not to matter, since the board loses power
+// rather than sleeping. See powerDown().
 static constexpr gpio_num_t kRtcIntPin = GPIO_NUM_9;
 static constexpr gpio_num_t kButtonPin = (gpio_num_t)BUTTON_1;
 
@@ -87,13 +89,15 @@ void powerLogWakeReason() {
 // read, so the only place these numbers can be seen is the display.
 //
 // What to look for:
-//   rst 8 DEEPSLEEP, wake 3 EXT1   the alarm woke the chip from deep sleep
-//   rst 8 DEEPSLEEP, wake 4 TIMER  the alarm was missed, the backstop caught it
-//   rst 1 POWERON,   wake 0 NONE   not a wake at all - the board was started
-//   rst 9 BROWNOUT                 the supply dipped, despite the detector
+//   rst 1 POWERON, wake 0 NONE   the normal case here: the alarm restored
+//                                 power and the board started from cold
+//   rst 9 BROWNOUT               the supply dipped, despite the detector
+//   rst 8 DEEPSLEEP              would mean the board really did sleep, which
+//                                it does not - see powerDown() in power.h
 //
-// The third of those, arriving punctually every night, would mean the alarm is
-// switching the board on rather than waking it.
+// This line is what established that the board is switched off between updates
+// rather than woken, after a port-presence test had suggested otherwise for a
+// while. Keep it available; the counters alone could not tell the difference.
 String powerWakeReport() {
     const WakeState &w = wakeState();
 
@@ -129,7 +133,7 @@ WakeSource powerWakeSource() {
 const char *powerWakeSourceName(WakeSource source) {
     switch (source) {
         case WakeSource::Alarm:      return "RTC alarm";
-        case WakeSource::Timer:      return "backstop timer";
+        case WakeSource::Timer:      return "timer (should not happen)";
         case WakeSource::Button:     return "button";
         case WakeSource::Ext1NoMask: return "ext1, no pin reported";
         default:                     return "power-on/reset";
@@ -137,7 +141,8 @@ const char *powerWakeSourceName(WakeSource source) {
 }
 
 // The SD slot sits on VDD3V3, which is NOT switched by PWR_EN, so anything in
-// it stays powered through deep sleep and cannot be turned off in software.
+// it stays powered for as long as that rail is up and cannot be turned off in
+// software.
 // That is why the dataset moved to internal flash - see storage.h.
 //
 // The pins are still parked, because the slot is still on the board and a card
@@ -168,7 +173,7 @@ static void shutdownRadios() {
     esp_bt_controller_disable();
 }
 
-[[noreturn]] void powerDown(long backstopSeconds) {
+[[noreturn]] void powerDown() {
     Serial.println("[power] powering down");
 
     // Drops the whole PWR_EN rail: e-paper supply and the blue LED7 with it.
@@ -191,22 +196,19 @@ static void shutdownRadios() {
     }
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
-    // Second wake source, independent of the RTC chip and the I2C bus that talks
-    // to it. Everything above depends on the PCF8563 having accepted its alarm:
-    // a NAKed write, a flat backup cell, a pulled INT line, and ext1 never
-    // fires. That failure is silent and total - the board simply never wakes
-    // again, and the only way back is the button.
+    // No esp_sleep_enable_timer_wakeup() here, deliberately. A backstop timer
+    // was armed for a while, on the belief that this was a real deep sleep; it
+    // could never have fired, because the rail drops and nothing is left
+    // counting. Leaving it in was worse than leaving it out - it read as a
+    // safety net over the one genuine single point of failure in the device.
     //
-    // The ESP32's RC oscillator is minutes-per-day out, which rules it out for
-    // scheduling and is perfectly good for a net. Armed past the alarm, so it
-    // only ever fires when the alarm did not.
-    if (backstopSeconds > 0) {
-        esp_sleep_enable_timer_wakeup((uint64_t)backstopSeconds * 1000000ULL);
-        Serial.printf("[power] backstop timer armed for %ld s (%.1f h)\n",
-                      backstopSeconds, backstopSeconds / 3600.0);
-    }
+    // If the PCF8563 does not accept its alarm - a NAKed write, a flat backup
+    // cell - the board does not come back at all, and the only recovery is a
+    // human power-cycling it. That is why rtcSetDailyAlarmUtc() reads its
+    // registers back and only reports `verified` once they hold what was
+    // written. That check is the safety net.
 
-    Serial.printf("[power] sleeping; wake pins RTC INT=%d button=%d\n",
+    Serial.printf("[power] powering down; pins RTC INT=%d button=%d\n",
                   digitalRead(kRtcIntPin), digitalRead(kButtonPin));
 
     esp_deep_sleep_start();

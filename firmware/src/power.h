@@ -5,10 +5,12 @@
 // Logs the reset reason and, when it was a deep-sleep wake, which pin caused it.
 void powerLogWakeReason();
 
-// Which source ended the last deep sleep. A Timer wake is a failure signal: it
-// means the RTC alarm did not arrive and the backstop had to recover the board.
-// Ext1NoMask means the chip woke on ext1 but reported no pin, which would make
-// a working alarm look like no alarm at all.
+// What ended the last cycle, as the ESP32 sees it.
+//
+// On this board the answer is always Other: it is switched off between updates,
+// so there is no wake to report. The other cases are kept because they are what
+// proves that - if Alarm, Timer or Ext1NoMask ever became non-zero, the board
+// would be doing something different from what is documented in powerDown().
 enum class WakeSource : uint8_t { Other = 0, Alarm, Timer, Button, Ext1NoMask };
 WakeSource powerWakeSource();
 const char *powerWakeSourceName(WakeSource source);
@@ -19,22 +21,18 @@ const char *powerWakeSourceName(WakeSource source);
 // definition for how to read it.
 String powerWakeReport();
 
-// Ends the cycle in deep sleep. Does not return.
+// Ends the cycle. Does not return.
 //
-// The board does NOT power off - the ESP32 runs from the always-on VDD3V3 rail
-// (LDO from VBAT/USB) and only the e-paper panel rail is switched. So the wake
-// source is a GPIO: the PCF8563 alarm pulls its INT pin (GPIO9) low, and the
-// front button (GPIO21) is wired the same way. Both are configured as ext1
-// wake sources here.
+// This calls esp_deep_sleep_start(), but the board does not sleep: the rail
+// drops and the PCF8563 alarm switches it back on. Measured on the boot the
+// alarm caused, untouched: reset reason POWERON, wake cause NONE, ext1 mask 0.
 //
-// An earlier version removed this, on the mistaken belief that the board fully
-// powered off. That belief came from POWERON reset reasons and lost RTC memory
-// which were both artifacts of a monitoring script toggling the EN pin over
-// USB - not the board's real behaviour. With no wake source configured, the
-// board slept through every nightly alarm.
+// So the ext1 configuration below is not what brings the board back - the alarm
+// is, by restoring power. It is left in place because it costs nothing and
+// documents the intent, but nothing should be built on it firing.
 //
-// `backstopSeconds` arms the ESP32's own timer as a second, independent wake
-// source. The RTC alarm is the accurate one and should always win; the timer
-// exists only so that a lost alarm costs one late update instead of silence for
-// ever. Pass 0 to leave it disarmed.
-[[noreturn]] void powerDown(long backstopSeconds);
+// This was believed to be a real deep sleep for a while, on the strength of a
+// port-presence test that could not tell the two apart. Anything relying on
+// deep-sleep behaviour - RTC memory, timer wakeups, a GPIO wake from the button
+// - does not work here. See firmware/README.md.
+[[noreturn]] void powerDown();

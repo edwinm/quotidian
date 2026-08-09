@@ -71,11 +71,10 @@ static String sPendingPassword;
 static String sSetupError;
 
 // Whether the PCF8563 alarm is what started this cycle, as opposed to a reset
-// or the button. Read from the chip's own alarm flag rather than from
-// powerWakeSource(), which reports what woke the ESP32: the two disagree in the
-// case that matters, where the alarm fired but the wake came from the backstop
-// timer or a finger. Reported again before powering down: the boot line is
-// usually lost while USB CDC enumerates.
+// or a hand on the power. Read from the chip's own alarm flag because the board
+// is switched off in between rather than asleep, so the ESP32's reset reason is
+// POWERON either way and cannot tell them apart. Reported again before powering
+// down: the boot line is usually lost while USB CDC enumerates.
 static bool sWokeByAlarm = false;
 
 // --- Wake accounting --------------------------------------------------------
@@ -86,15 +85,31 @@ static bool sWokeByAlarm = false;
 static void recordWake(WakeSource source) {
     WakeStats stats = settingsWakeStats();
 
-    // A battery found fuller than the baseline has been charged, which ends the
-    // run being measured. Counters and baseline restart together, so the wake
-    // count and the volts lost always describe the same stretch of time.
+    // Start or restart the baseline the drain is measured against.
     //
-    // Only ever on battery: running off USB must not wipe a run in progress,
-    // which is exactly what reading the numbers over USB would otherwise do.
+    // The hard part is knowing whether the reading is the cell at all. With USB
+    // attached the divider sees the charger's rail, around 4.2 V, which is
+    // indistinguishable from a full battery - and `present` is only
+    // "volts > 2.5", so it is true either way. An earlier version armed the
+    // baseline on any full-looking reading and duly latched 4.20 V while
+    // plugged in for a flash. The device then reported 953 mV/d, a rate that
+    // would have flattened the cell within the day, and the figure it printed
+    // before that was quietly wrong in the same direction for a week.
+    //
+    // There is no VBUS signal exposed on this board to test, so the rule is to
+    // distrust the top of the range: a reading at or above kCharging is treated
+    // as "cannot tell", and no baseline is taken from it. The cost is that the
+    // first hours after a charge go unmeasured, which is exactly the stretch
+    // where a LiPo's surface charge makes the voltage meaningless anyway.
+    static constexpr float kCharging = 4.15f;
+
     const bool haveBaseline = stats.firstVolts > 0.0f;
+    const bool trustworthy = sBattery.present && sBattery.volts < kCharging;
+    // Above the baseline by more than the ADC can wander means a real charge
+    // happened, and the run being measured is over.
     const bool recharged = haveBaseline && sBattery.volts > stats.firstVolts + 0.15f;
-    if (sBattery.present && (!haveBaseline || recharged)) {
+
+    if (trustworthy && (!haveBaseline || recharged)) {
         stats = {};
         stats.firstVolts = sBattery.volts;
         stats.firstEpoch = timeSynced() ? (int64_t)time(nullptr) : 0;
@@ -234,7 +249,13 @@ static void drawPowerDiagnostics(LineFn line) {
                             ? (now - stats.firstEpoch) / 86400.0
                             : 0.0;
 
-    if (stats.firstVolts > 0.0f && days > 0.25) {
+    if (stats.firstVolts <= 0.0f) {
+        // No baseline yet, because every reading so far has been at charging
+        // voltage. Say so rather than printing "from 0.00 V", which reads like
+        // a measurement.
+        snprintf(buf, sizeof(buf), "%.2f V %d%%   no baseline yet",
+                 sBattery.volts, sBattery.percent);
+    } else if (days > 0.25) {
         const double lost = stats.firstVolts - sBattery.volts;
         snprintf(buf, sizeof(buf), "%.2f V %d%%   from %.2f V over %.1f d   %.0f mV/d",
                  sBattery.volts, sBattery.percent, stats.firstVolts, days,
@@ -464,17 +485,6 @@ static long secondsUntilNextWake() {
     return (long)(at - now);
 }
 
-// Arms both wake sources, then sleeps.
-//
-// The PCF8563 alarm is the accurate one and normally fires first. The ESP32's
-// own timer is armed this much later purely as a backstop: its RC oscillator is
-// minutes-per-day inaccurate, so it is no good for scheduling, but it does
-// guarantee the device still wakes if the alarm never arrives.
-//
-// The margin has to clear the RC oscillator's own error over a day, or the
-// backstop would race the alarm and take over a job it is far worse at.
-static constexpr long kBackstopMarginSeconds = TEST_WAKE_SECONDS ? 60 : 3600;
-
 // True once the cycle has finished and the device is deliberately staying up,
 // which only happens with DEEP_SLEEP_ENABLED == 0.
 static bool sStayingAwake = false;
@@ -502,7 +512,7 @@ static void sleepUntilNextWake() {
         // relative alarm still brings the board back.
         Serial.printf("[power] clock unknown, retrying in %d min\n", SLEEP_RETRY_MINUTES);
         rtcSetAlarmInMinutes(SLEEP_RETRY_MINUTES);
-        powerDown(SLEEP_RETRY_MINUTES * 60L + kBackstopMarginSeconds);
+        powerDown();
     }
 
     long seconds = secondsUntilNextWake();
@@ -518,7 +528,7 @@ static void sleepUntilNextWake() {
                   sWokeByAlarm ? "RTC alarm" : "power-on/reset",
                   seconds, seconds / 3600.0);
 
-    powerDown(seconds + kBackstopMarginSeconds);
+    powerDown();
 }
 
 // Woke before the date rolled over - too early, or the alarm shifted an hour
@@ -800,8 +810,8 @@ void setup() {
     sleepUntilNextWake();
 }
 
-// Only runs with DEEP_SLEEP_ENABLED == 0. In normal operation setup() ends in
-// deep sleep and this is never reached.
+// Only runs with DEEP_SLEEP_ENABLED == 0. In normal operation setup() ends by
+// powering the board down and this is never reached.
 void loop() {
     if (!sStayingAwake) {
         delay(100);
