@@ -74,8 +74,9 @@
 // from a reading at charging voltage: on USB the divider sees the charger, not
 // the cell, and a baseline latched there reports a drain that never happened.
 //
-// On while the week-long battery drain is being chased. Turn it off afterwards.
-#define SHOW_POWER_DIAGNOSTICS 1
+// Off: the drain turned out to be the SD card, now removed. Turn it back on
+// to measure again.
+#define SHOW_POWER_DIAGNOSTICS 0
 
 // ---------------------------------------------------------------------------
 // Sleep schedule

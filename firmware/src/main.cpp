@@ -103,7 +103,12 @@ static void recordWake(WakeSource source) {
     // where a LiPo's surface charge makes the voltage meaningless anyway.
     static constexpr float kCharging = 4.15f;
 
-    const bool haveBaseline = stats.firstVolts > 0.0f;
+    // The rule has to apply to what is already stored, not only to what is
+    // about to be written. Blocking bad baselines while still honouring one
+    // recorded before the rule existed left the device reporting a drain from
+    // 4.20 V for another eight days - correct code, wrong starting point, and
+    // no way for it to ever escape on its own.
+    const bool haveBaseline = stats.firstVolts > 0.0f && stats.firstVolts < kCharging;
     const bool trustworthy = sBattery.present && sBattery.volts < kCharging;
     // Above the baseline by more than the ADC can wander means a real charge
     // happened, and the run being measured is over.
@@ -257,7 +262,7 @@ static void drawPowerDiagnostics(LineFn line) {
                  sBattery.volts, sBattery.percent);
     } else if (days > 0.25) {
         const double lost = stats.firstVolts - sBattery.volts;
-        snprintf(buf, sizeof(buf), "%.2f V %d%%   from %.2f V over %.1f d   %.0f mV/d",
+        snprintf(buf, sizeof(buf), "%.2f V %d%%  from %.2f V over %.1f d  %.0f mV/d",
                  sBattery.volts, sBattery.percent, stats.firstVolts, days,
                  lost * 1000.0 / days);
     } else {
@@ -287,12 +292,19 @@ static void drawFooter(int margin) {
 
     // Diagnostic panels stack upwards from just above the credit, so either can
     // be switched on alone or both together without them landing on each other.
+    //
+    // They are laid out at the narrow margin whatever the quote is using. At the
+    // wide margin there are only 324 px, and these lines lost their last field
+    // to the ellipsis - the mV/d figure and the `other` count, which are the two
+    // numbers worth reading. Debug text does not have to align with the quote.
 #if SHOW_CLOCK_DIAGNOSTICS || SHOW_POWER_DIAGNOSTICS
-    const int diagLead = 26;
+    const int diagMargin = min(margin, kNarrowMargin);
+    const int diagWidth  = UI_WIDTH - 2 * diagMargin;
+    const int diagLead   = 26;
     int diagY = baseline - 30;
     auto diagLine = [&](const String &text) {
-        uiDrawText(Font::Small, margin, diagY,
-                   uiEllipsize(Font::Small, text, bodyWidth).c_str(), ink::kTextLight);
+        uiDrawText(Font::Small, diagMargin, diagY,
+                   uiEllipsize(Font::Small, text, diagWidth).c_str(), ink::kTextLight);
         diagY -= diagLead;
     };
 #endif
