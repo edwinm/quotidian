@@ -33,14 +33,59 @@ today's date. See [firmware/README.md](firmware/README.md).
 ## Getting started
 
 You need the [LilyGo T5 4.7" e-paper board](https://lilygo.cc/products/t5-4-7-inch-e-paper-v2-3)
-(ESP32-S3, **non-touch** version), [Node.js](https://nodejs.org) and
-[PlatformIO](https://platformio.org). No SD card — the quotes live in the
-board's own flash.
+(ESP32-S3, **non-touch** version) and a USB-C data cable. No SD card — the
+quotes live in the board's own flash.
 
 The board is sold in touch and non-touch versions; this firmware targets the
 non-touch one and never initialises a touch controller. It has to be the
 ESP32-S3 variant — the older ESP32 board uses different pins for the panel and
 the real-time clock.
+
+There are two ways to get it onto the board: flash a ready-made release, which
+needs nothing installed, or build it yourself.
+
+### Flash a release
+
+Download two files from the
+[latest release](https://github.com/edwinm/quotidian/releases/latest):
+
+| File | What it is | Flash at |
+| --- | --- | --- |
+| `quotidian-1.0-firmware.bin` | the program: bootloader, partition table and application in one | `0x0` |
+| `quotidian-1.0-quotes.bin` | the quotes: 20 for every day of the year, as a LittleFS image | `0xC90000` |
+
+**1. Put the board in download mode.** Connect USB, then hold **BOOT** (IO0),
+tap **RST**, and release BOOT. The board has no power between its nightly
+updates, so without this it will not show up on the computer at all.
+
+**2. Flash both files.** In Chrome or Edge, open Espressif's browser flasher at
+[espressif.github.io/esptool-js](https://espressif.github.io/esptool-js/),
+click **Connect** and pick the board, then add both files with their addresses
+from the table and click **Program**.
+
+Or from a terminal, with [esptool](https://docs.espressif.com/projects/esptool/)
+(`pip install esptool`):
+
+```bash
+python3 -m esptool --chip esp32s3 write_flash 0x0 quotidian-1.0-firmware.bin 0xC90000 quotidian-1.0-quotes.bin
+```
+
+**3. Cold boot it.** After flashing, the board stays in download mode and does
+nothing — while the screen keeps showing its old image, so it looks as if it is
+working. Disconnect USB, wait a few seconds, and reconnect it without touching
+any button. With a battery attached, disconnect the battery as well: otherwise
+there is no power cut and it stays in download mode.
+
+The two files are independent. Flashing only the quotes file replaces the
+quotes and leaves everything else alone. Flashing the firmware file erases the
+saved Wi-Fi network, because it overwrites the settings area on its way to the
+application, so the board comes up in setup mode again — see
+[Connect it to Wi-Fi](#connect-it-to-wi-fi).
+
+### Or build it yourself
+
+You also need [Node.js](https://nodejs.org) and
+[PlatformIO](https://platformio.org).
 
 **1. Generate the quote files.**
 
@@ -52,7 +97,8 @@ npm run export:device                  # 366 day files, ~1.2 MB
 `data/quotes-by-day.json` is already in the repo, so there is no need to re-run
 the Wikidata/Wikiquote fetch unless you want fresher data.
 
-**2. Build and flash.** Connect USB, then write the firmware and the quotes:
+**2. Build and flash.** Put the board in download mode as above, then write the
+firmware and the quotes:
 
 ```bash
 pio run -t upload                      # the application
@@ -61,9 +107,16 @@ pio run -t uploadfs                    # the quotes, into the flash filesystem
 
 The two are independent: `uploadfs` replaces the dataset without touching the
 application, so refreshing the quotes later does not mean reflashing the
-firmware.
+firmware. Finish with a cold boot, as above.
 
-**4. Connect it to Wi-Fi.** The display boots into setup mode and shows you how:
+On Apple Silicon without Rosetta, `uploadfs` fails with *Bad CPU type in
+executable*: PlatformIO ships `mklittlefs` for Intel only. See
+[firmware/README.md](firmware/README.md#where-the-dataset-lives-and-why-not-on-a-card)
+for building a native one that the board can mount.
+
+### Connect it to Wi-Fi
+
+The display boots into setup mode and shows you how:
 scan the QR code with a phone, or open
 [improv-wifi.com](https://www.improv-wifi.com/) in Chrome while it is
 plugged in. Nothing needs to be edited in the source, and the credentials are

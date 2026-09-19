@@ -430,6 +430,31 @@ environment looks plausible, is accepted in silence, and does nothing — the
 image is then built from the default `data/`, which here means trying to flash
 the 12 MB corpus and failing with `No more free space`.
 
+**On Apple Silicon without Rosetta, `buildfs` and `uploadfs` fail** with
+*Bad CPU type in executable*: the `tool-mklittlefs` PlatformIO installs is an
+Intel binary. Either install Rosetta, or build
+[mklittlefs](https://github.com/earlephilhower/mklittlefs) natively — but not
+with its defaults, which the board cannot mount. The core on this board ships
+an older LittleFS that allows 64-character names and reads on-disk format 2.0;
+current mklittlefs writes format 2.1 with 255-character names, and a superblock
+promising more than the reader supports is refused at mount. Build it with:
+
+```bash
+git clone --recursive https://github.com/earlephilhower/mklittlefs.git
+cd mklittlefs
+sed -i '' 's/-D LFS_NAME_MAX=255/-D LFS_NAME_MAX=64/' Makefile
+sed -i '' 's/  s_cfg.name_max = 0;/  s_cfg.name_max = 0;\n  s_cfg.disk_version = 0x00020000;/' main.cpp
+make CPPFLAGS=-DLFS_MULTIVERSION
+```
+
+and pack the image with the same geometry PlatformIO uses:
+
+```bash
+./mklittlefs -c ../quotidian/data/device -b 4096 -p 256 -s 3538944 littlefs.bin
+```
+
+That is how the 1.0 release image was made.
+
 Without the dataset the device still runs: it logs `/quotes/MM-DD.tsv not found`
 and falls back to `/quote.txt`, then to a built-in quote. `LittleFS.begin()` is
 called with `formatOnFail = false` on purpose — a missing filesystem and an
